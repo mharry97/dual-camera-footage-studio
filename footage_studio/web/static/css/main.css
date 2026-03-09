@@ -1,0 +1,155 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  color: #999;
+  background: #fff;
+  padding: 0 60px;
+}
+
+/* Header */
+
+header {
+  display: flex;
+  align-items: center;
+  padding: 24px 0;
+  margin-bottom: 32px;
+}
+
+.logo {
+  font-size: 28px;
+  font-weight: 700;
+  color: #999;
+  text-decoration: none;
+  margin-right: auto;
+}
+
+nav {
+  display: flex;
+  gap: 80px;
+}
+
+.nav-link {
+  color: #999;
+  text-decoration: none;
+  padding: 6px 20px;
+  border-radius: 999px;
+}
+
+.nav-link.active {
+  background: #eee;
+}
+
+.nav-link:hover:not(.active) {
+  color: #777;
+}
+
+/* Main content */
+
+main {
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+p, li {
+  line-height: 1.7;
+}
+
+ol {
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.welcome-heading {
+  font-size: 16px;
+}
+
+/* Footer links */
+
+.footer-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.footer-links a {
+  color: #999;
+}
+
+/* Settings */
+
+.settings {
+  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-heading {
+  font-weight: 700;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-row input {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  color: #999;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 6px 10px;
+  width: 360px;
+  outline: none;
+}
+
+.settings-row input:focus {
+  border-color: #bbb;
+}
+
+.btn-save {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  color: #999;
+  background: #eee;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 20px;
+  cursor: pointer;
+}
+
+.btn-save:hover {
+  background: #e0e0e0;
+}
+
+/* Green action button (Group, Stitch Selected, etc.) */
+
+.btn-action {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  color: #fff;
+  background: #a8d090;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 28px;
+  cursor: pointer;
+  display: block;
+  margin: 40px auto 0;
+}
+
+.btn-action:hover {
+  background: #96c27e;
+}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% set active = "home" %}
+
+{% block content %}
+<p class="welcome-heading">Welcome.</p>
+
+<p>This locally hosted website gives you a UX you can use to convert your raw footage files
+that you have collected from a dual action camera set-up, into single panoramic videos
+showing the entire filming area.</p>
+
+<p>The process to go from the raw footage on the SD cards from your cameras requires three steps:</p>
+
+<ol>
+  <li>Upload your raw footage from the SD cards to your chosen storage device, with the footage
+  from the left camera going in the "Left Camera" directory, and the footage from the right
+  camera going in the "Right Camera" directory.</li>
+  <li>Group together the relevant files so that we have a single left camera and single right
+  camera video per filming session.</li>
+  <li>Stitch together the left and right camera footage into a single output video displaying
+  the whole filming area.</li>
+</ol>
+
+<div class="footer-links">
+  <p>For more detailed instructions, visit <a href="#">here</a>.</p>
+  <p>For a brief video tutorial, visit <a href="#">here</a>.</p>
+  <p>If you'd like to contribute to the project or report an issue, the GitHub repo is <a href="#">here</a>.</p>
+</div>
+
+<div class="settings">
+  <p class="settings-heading">Settings</p>
+  <div class="settings-row">
+    <label for="footage-dir">Footage directory</label>
+    <input type="text" id="footage-dir" placeholder="/path/to/footage">
+    <button class="btn-save" onclick="saveSettings()">Save</button>
+  </div>
+</div>
+
+<script>
+  async function saveSettings() {
+    const dir = document.getElementById('footage-dir').value;
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ footage_dir: dir }),
+    });
+    if (res.ok) alert('Saved.');
+    else alert('Failed to save.');
+  }
+
+  async function loadSettings() {
+    const res = await fetch('/api/settings');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.footage_dir) document.getElementById('footage-dir').value = data.footage_dir;
+    }
+  }
+
+  loadSettings();
+</script>
+{% endblock %}
