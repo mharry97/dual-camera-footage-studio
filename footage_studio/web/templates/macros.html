@@ -1,0 +1,24 @@
+{% macro file_card(filename) %}
+<div class="file-card">
+  <div class="file-card-thumbnail"></div>
+  <span class="file-card-name">{{ filename }}</span>
+</div>
+{% endmacro %}
+
+{% macro file_grid(files) %}
+<div class="file-grid">
+  {% for file in files %}
+    {{ file_card(file) }}
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro group_section(title, files, meta=None) %}
+<div class="group-section">
+  <div class="group-section-header">
+    <span class="group-section-title">{{ title }}</span>
+    {% if meta %}<span class="group-section-meta">{{ meta }}</span>{% endif %}
+  </div>
+  {{ file_grid(files) }}
+</div>
+{% endmacro %}

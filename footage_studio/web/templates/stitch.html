@@ -2,4 +2,74 @@
 {% set active = "stitch" %}
 
 {% block content %}
+<div id="message"></div>
+<button class="btn-save" onclick="scan()">Scan</button>
+
+<div id="results" style="display: none">
+  <div id="sessions-container"></div>
+  <button class="btn-action" onclick="stitchSelected()">Stitch Selected</button>
+</div>
+
+<script>
+  function renderFileCard(filename, label) {
+    return `
+      <div class="file-card">
+        <div class="file-card-thumbnail"></div>
+        <span class="file-card-label">${label}</span>
+        <span class="file-card-name">${filename}</span>
+      </div>`;
+  }
+
+  function renderSession(session, index) {
+    return `
+      <div class="stitch-section">
+        <div class="stitch-section-header">
+          <input type="checkbox" class="stitch-checkbox" id="check-${index}" checked>
+          <input type="text" class="stitch-name-input" id="name-${index}" value="${session.name}">
+        </div>
+        <div class="file-grid">
+          ${renderFileCard(session.left, 'Left Camera')}
+          ${renderFileCard(session.right, 'Right Camera')}
+        </div>
+      </div>`;
+  }
+
+  async function scan() {
+    const message = document.getElementById('message');
+    const results = document.getElementById('results');
+    message.textContent = '';
+    results.style.display = 'none';
+
+    const res = await fetch('/api/stitch/scan');
+    const data = await res.json();
+
+    if (data.status === 'no_directory') {
+      message.textContent = 'No footage directory set. Please set one in Settings.';
+      return;
+    }
+
+    if (data.status === 'directory_not_found') {
+      message.textContent = 'Footage directory not found. Please check your settings.';
+      return;
+    }
+
+    if (data.status === 'missing_dirs') {
+      message.textContent = `Missing directories: ${data.missing.join(', ')}.`;
+      return;
+    }
+
+    if (data.sessions.length === 0) {
+      message.textContent = 'No grouped sessions found. Run the Group step first.';
+      return;
+    }
+
+    const container = document.getElementById('sessions-container');
+    container.innerHTML = data.sessions.map(renderSession).join('');
+    results.style.display = 'block';
+  }
+
+  function stitchSelected() {
+    // Stitching logic to be implemented
+  }
+</script>
 {% endblock %}

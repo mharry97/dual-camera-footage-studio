@@ -2,4 +2,111 @@
 {% set active = "group" %}
 
 {% block content %}
+<div id="message"></div>
+<button class="btn-save" id="scan-btn" onclick="scan()">Scan</button>
+
+<div id="results" style="display: none">
+  <div id="groups-container"></div>
+  <button class="btn-action" onclick="confirmGroup()">Group</button>
+</div>
+
+<script>
+  function formatDuration(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  function renderFileCard(file) {
+    return `
+      <div class="file-card">
+        <div class="file-card-thumbnail"></div>
+        <span class="file-card-name">${file.name}</span>
+      </div>`;
+  }
+
+  function renderGroupSection(group) {
+    const cards = group.files.map(renderFileCard).join('');
+    return `
+      <div class="group-section">
+        <div class="group-section-header">
+          <span class="group-section-title">${group.name}</span>
+          <span class="group-section-meta">${formatDuration(group.total_duration)}</span>
+        </div>
+        <div class="file-grid">${cards}</div>
+      </div>`;
+  }
+
+  function renderCameraSection(label, groups) {
+    if (groups.length === 0) return '';
+    const sections = groups.map(renderGroupSection).join('');
+    return `<div class="camera-section">
+      <p class="camera-section-label">${label}</p>
+      ${sections}
+    </div>`;
+  }
+
+  async function scan() {
+    const message = document.getElementById('message');
+    const results = document.getElementById('results');
+    message.textContent = '';
+    results.style.display = 'none';
+
+    const res = await fetch('/api/group/scan');
+    const data = await res.json();
+
+    if (data.status === 'no_directory') {
+      message.textContent = 'No footage directory set. Please set one in Settings.';
+      return;
+    }
+
+    if (data.status === 'directory_not_found') {
+      message.textContent = 'Footage directory not found. Please check your settings.';
+      return;
+    }
+
+    if (data.status === 'missing_dirs') {
+      message.innerHTML = `Missing directories: ${data.missing.join(', ')}.
+        <button class="btn-save" onclick="createDirs()" style="margin-left: 12px">Create</button>`;
+      return;
+    }
+
+    const container = document.getElementById('groups-container');
+    const totalGroups = data.left.length + data.right.length;
+
+    if (totalGroups === 0) {
+      message.textContent = 'No unprocessed files found.';
+      return;
+    }
+
+    container.innerHTML =
+      renderCameraSection('Left Camera', data.left) +
+      renderCameraSection('Right Camera', data.right);
+
+    results.style.display = 'block';
+  }
+
+  async function createDirs() {
+    await fetch('/api/group/create-dirs', { method: 'POST' });
+    scan();
+  }
+
+  async function confirmGroup() {
+    const message = document.getElementById('message');
+    const results = document.getElementById('results');
+    message.textContent = 'Grouping...';
+    document.querySelector('.btn-action').disabled = true;
+
+    const res = await fetch('/api/group/confirm', { method: 'POST' });
+    const data = await res.json();
+
+    results.style.display = 'none';
+    message.textContent = data.status === 'ok'
+      ? 'Done. Files grouped successfully.'
+      : 'Something went wrong.';
+  }
+</script>
 {% endblock %}
