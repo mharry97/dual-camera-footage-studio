@@ -1,8 +1,12 @@
+import static_ffmpeg
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from footage_studio.web.routers import pages, settings
+
+static_ffmpeg.add_paths()
 
 app = FastAPI(title="Footage Studio")
 
