@@ -1,6 +1,6 @@
-# Footage Studio
+# Dual Camera Footage Studio
 
-A locally-hosted web app for processing dual action camera footage of Ultimate Frisbee matches and trainings into single panoramic videos covering the entire pitch.
+A locally-hosted web app for processing dual action camera footage into single panoramic videos covering the entire pitch. Initially designed for sports teams recording their games and training sessions.
 
 Footage Studio takes the raw clips from two cameras mounted side-by-side on a tripod, groups them into recording sessions, and stitches the left and right camera footage together into a single wide panoramic output — giving you a hands-free, full-pitch recording with no subscription fees and no ongoing costs.
 
@@ -50,7 +50,7 @@ Then open [http://localhost:8000](http://localhost:8000) in your browser.
 
 ### 5. Configure settings
 
-On the Home page, enter the full path to your footage folder (e.g. `/Volumes/MyDrive/Frisbee Footage`) and click Save.
+On the Home page, enter the full path to your footage folder (e.g. `/Volumes/MyDrive/Team Footage`) and click Save.
 
 ---
 
@@ -62,7 +62,7 @@ On the Home page, enter the full path to your footage folder (e.g. `/Volumes/MyD
 
 2. Open the app and navigate to the **Group** page. Click **Scan** to detect your recordings. The app will group consecutive clips from the same recording session together. Review the groups and click **Group** to concatenate each group into a single file. This step is neccesary for any recording devices that record onto an SD card, as the file formatting only allows files up to a size of 4GB and so will split longer recordings into chunks that are <= 4GB in size.
 
-3. Navigate to the **Stitch** page. Click **Scan** to match up your left and right camera sessions. Give each session a name (e.g. "Training 2026-01-01" or "Team 1 Vs Team 2 2026-01-01"), untick any sessions you don't want to process, then click **Stitch Selected**. This step can take quite a while depending on the size of the files
+3. Navigate to the **Stitch** page. Click **Scan** to match up your left and right camera sessions. Give each session a name (e.g. "Training 2026-01-01" or "Team 1 Vs Team 2 2026-01-01"), untick any sessions you don't want to process, then click **Stitch Selected**. This step can take quite a while depending on the size of the files and what device you are using to do the processing.
 
 4. Navigate to the **Browse** page to view your finished panoramic output videos.
 
