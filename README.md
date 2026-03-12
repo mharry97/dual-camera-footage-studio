@@ -8,9 +8,8 @@ Footage Studio takes the raw clips from two cameras mounted side-by-side on a tr
 
 ## Requirements
 
-- Python 3.11 or higher
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- Two action cameras (e.g. DJI Action 4) mounted on a tripod or camera mast
+- Footage recorded from two devices (same model) with overlapping FoV
 - A computer or external hard drive with enough storage for your footage
 
 ---
