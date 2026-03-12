@@ -54,15 +54,15 @@ On the Home page, enter the full path to your footage folder (e.g. `/Volumes/MyD
 
 ---
 
-## Workflow
+## Standard Workflow
 
 ### After filming
 
-1. Eject the SD cards from both cameras and copy the footage to your storage device — left camera clips into `Left Camera/`, right camera clips into `Right Camera/`.
+1. Transfer your footage from your recording devices to your storage device — left camera clips into `Left Camera/`, right camera clips into `Right Camera/`. Whilst the stitching together of videos doesn't require you to know which side the footage comes from, it makes the next step easier.
 
-2. Open the app and navigate to the **Group** page. Click **Scan** to detect your recordings. The app will group consecutive clips from the same recording session together. Review the groups and click **Group** to concatenate each group into a single file.
+2. Open the app and navigate to the **Group** page. Click **Scan** to detect your recordings. The app will group consecutive clips from the same recording session together. Review the groups and click **Group** to concatenate each group into a single file. This step is neccesary for any recording devices that record onto an SD card, as the file formatting only allows files up to a size of 4GB and so will split longer recordings into chunks that are <= 4GB in size.
 
-3. Navigate to the **Stitch** page. Click **Scan** to match up your left and right camera sessions. Give each session a name (e.g. the opponent or tournament name), untick any sessions you don't want to process, then click **Stitch Selected**.
+3. Navigate to the **Stitch** page. Click **Scan** to match up your left and right camera sessions. Give each session a name (e.g. "Training 2026-01-01" or "Team 1 Vs Team 2 2026-01-01"), untick any sessions you don't want to process, then click **Stitch Selected**. This step can take quite a while depending on the size of the files
 
 4. Navigate to the **Browse** page to view your finished panoramic output videos.
 
