@@ -1,22 +1,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-import json
-from pathlib import Path
+
+from footage_studio.core import load_settings, save_settings
 
 router = APIRouter(prefix="/api/settings")
-
-SETTINGS_FILE = Path.home() / ".footage-studio" / "settings.json"
-
-
-def _load() -> dict:
-    if SETTINGS_FILE.exists():
-        return json.loads(SETTINGS_FILE.read_text())
-    return {}
-
-
-def _save(data: dict):
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_FILE.write_text(json.dumps(data, indent=2))
 
 
 class Settings(BaseModel):
@@ -25,12 +12,12 @@ class Settings(BaseModel):
 
 @router.get("")
 async def get_settings():
-    return _load()
+    return load_settings()
 
 
 @router.post("")
 async def post_settings(settings: Settings):
-    data = _load()
+    data = load_settings()
     data["footage_dir"] = settings.footage_dir
-    _save(data)
+    save_settings(data)
     return {"ok": True}

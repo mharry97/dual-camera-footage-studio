@@ -2,4 +2,53 @@
 {% set active = "browse" %}
 
 {% block content %}
+<div id="message"></div>
+<button class="btn-save" onclick="scan()">Scan</button>
+
+<div id="results" style="display: none">
+  <div id="files-container" class="file-grid"></div>
+</div>
+
+<script>
+  function renderFileCard(file) {
+    return `
+      <div class="file-card">
+        <div class="file-card-thumbnail"></div>
+        <span class="file-card-name">${file.name}</span>
+      </div>`;
+  }
+
+  async function scan() {
+    const message = document.getElementById('message');
+    const results = document.getElementById('results');
+    message.textContent = '';
+    results.style.display = 'none';
+
+    const res = await fetch('/api/browse/scan');
+    const data = await res.json();
+
+    if (data.status === 'no_directory') {
+      message.textContent = 'No footage directory set. Please set one in Settings.';
+      return;
+    }
+
+    if (data.status === 'directory_not_found') {
+      message.textContent = 'Footage directory not found. Please check your settings.';
+      return;
+    }
+
+    if (data.status === 'missing_dirs') {
+      message.textContent = `Missing directories: ${data.missing.join(', ')}.`;
+      return;
+    }
+
+    if (data.files.length === 0) {
+      message.textContent = 'No output files found.';
+      return;
+    }
+
+    document.getElementById('files-container').innerHTML = data.files.map(renderFileCard).join('');
+    results.style.display = 'block';
+  }
+</script>
 {% endblock %}
