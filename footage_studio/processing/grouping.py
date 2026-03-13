@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from footage_studio.core import get_created_time, get_metadata, get_video_duration
+from footage_studio.core import get_created_time, get_metadata, get_video_duration, glob_mp4
 
 
 @dataclass
@@ -31,7 +31,7 @@ class Group:
 def scan_camera_dir(camera_dir: Path) -> list[Group]:
     """Scan a camera directory and group consecutive clips by recording session."""
     unprocessed = []
-    for fp in sorted(camera_dir.glob("*.mp4")):
+    for fp in glob_mp4(camera_dir):
         if get_metadata(fp, "status") != "PROCESSED":
             created = get_created_time(fp)
             duration = get_video_duration(fp)

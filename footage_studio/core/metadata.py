@@ -20,6 +20,8 @@ def set_metadata(filepath: Path, key: str, value: str) -> None:
                 str(filepath),
                 "-c",
                 "copy",
+                "-movflags",
+                "use_metadata_tags",
                 "-metadata",
                 f"{key}={value}",
                 str(tmp_path),
@@ -42,13 +44,19 @@ def get_metadata(filepath: Path, key: str) -> str | None:
     return tags_lower.get(key.lower())
 
 
+def glob_mp4(directory: Path, recursive: bool = False) -> list[Path]:
+    """Return all .mp4/.MP4 files in directory, sorted by name."""
+    prefix = "**/" if recursive else ""
+    files = set(directory.glob(f"{prefix}*.mp4")) | set(directory.glob(f"{prefix}*.MP4"))
+    return sorted(files)
+
+
 def get_files_by_status(
     directory: Path, status: str, recursive: bool = False
 ) -> list[Path]:
     """Return all MP4 files in directory with the given status metadata value."""
-    pattern = "**/*.mp4" if recursive else "*.mp4"
     results = []
-    for filepath in sorted(directory.glob(pattern)):
+    for filepath in glob_mp4(directory, recursive=recursive):
         if get_metadata(filepath, "status") == status:
             results.append(filepath)
     return results
