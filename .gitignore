@@ -1,4 +1,7 @@
 .claude/
 CLAUDE.md
+.venv/
 __pycache__/
 *.pyc
+*.log
+
