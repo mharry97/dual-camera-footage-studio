@@ -32,7 +32,7 @@ def scan_camera_dir(camera_dir: Path) -> list[Group]:
     """Scan a camera directory and group consecutive clips by recording session."""
     unprocessed = []
     for fp in glob_mp4(camera_dir):
-        if get_metadata(fp, "status") != "PROCESSED":
+        if get_metadata(fp, "status") is None:
             created = get_created_time(fp)
             duration = get_video_duration(fp)
             unprocessed.append(FileInfo(fp, fp.name, created, duration))
