@@ -8,14 +8,14 @@
 that you have collected from a dual action camera set-up, into single panoramic videos
 showing the entire filming area.</p>
 
-<p>The process to go from the raw footage on the SD cards from your cameras requires three steps:</p>
+<p>The process requires three steps:</p>
 
 <ol>
-  <li>Upload your raw footage from the SD cards to your chosen storage device, with the footage
-  from the left camera going in the "Left Camera" directory, and the footage from the right
-  camera going in the "Right Camera" directory.</li>
-  <li>Group together the relevant files so that we have a single left camera and single right
-  camera video per filming session.</li>
+  <li>Configure the paths to your left camera, right camera, and output directories in settings below.
+  These can point directly to the SD cards in your cameras, or to a storage device if you prefer
+  to copy footage across first.</li>
+  <li>Optionally group together clips from the same session if your cameras split recordings into
+  multiple chunks.</li>
   <li>Stitch together the left and right camera footage into a single output video displaying
   the whole filming area.</li>
 </ol>
@@ -29,20 +29,32 @@ showing the entire filming area.</p>
 <div class="settings">
   <p class="settings-heading">Settings</p>
   <div class="settings-row">
-    <label for="footage-dir">Footage directory</label>
-    <input type="text" id="footage-dir" placeholder="/path/to/footage">
+    <label for="left-camera-dir">Left camera directory</label>
+    <input type="text" id="left-camera-dir" placeholder="/path/to/left-camera">
+  </div>
+  <div class="settings-row">
+    <label for="right-camera-dir">Right camera directory</label>
+    <input type="text" id="right-camera-dir" placeholder="/path/to/right-camera">
+  </div>
+  <div class="settings-row">
+    <label for="output-dir">Output directory</label>
+    <input type="text" id="output-dir" placeholder="/path/to/output">
+  </div>
+  <div class="settings-row">
     <button class="btn-save" onclick="saveSettings()">Save</button>
   </div>
-  <p class="settings-hint">Enter the full absolute path to your footage directory, e.g. /Users/you/Documents/Footage</p>
 </div>
 
 <script>
   async function saveSettings() {
-    const dir = document.getElementById('footage-dir').value;
     const res = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ footage_dir: dir }),
+      body: JSON.stringify({
+        left_camera_dir: document.getElementById('left-camera-dir').value,
+        right_camera_dir: document.getElementById('right-camera-dir').value,
+        output_dir: document.getElementById('output-dir').value,
+      }),
     });
     if (res.ok) alert('Saved.');
     else alert('Failed to save.');
@@ -52,7 +64,9 @@ showing the entire filming area.</p>
     const res = await fetch('/api/settings');
     if (res.ok) {
       const data = await res.json();
-      if (data.footage_dir) document.getElementById('footage-dir').value = data.footage_dir;
+      if (data.left_camera_dir) document.getElementById('left-camera-dir').value = data.left_camera_dir;
+      if (data.right_camera_dir) document.getElementById('right-camera-dir').value = data.right_camera_dir;
+      if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
     }
   }
 

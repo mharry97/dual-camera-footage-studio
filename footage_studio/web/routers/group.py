@@ -1,33 +1,31 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from footage_studio.core import check_subdirectories, get_footage_dir, set_metadata
+from footage_studio.core import get_created_time, get_left_camera_dir, get_right_camera_dir, set_metadata
 from footage_studio.processing import concatenate, scan_camera_dir
 
 router = APIRouter(prefix="/api/group")
 
 CAMERA_SIDES = {
-    "Left Camera": "LEFT",
-    "Right Camera": "RIGHT",
+    "left": "LEFT",
+    "right": "RIGHT",
 }
 
 
 @router.get("/scan")
 async def scan():
-    footage_dir = get_footage_dir()
-    if not footage_dir:
+    left_dir = get_left_camera_dir()
+    right_dir = get_right_camera_dir()
+    if not left_dir or not right_dir:
         return JSONResponse({"status": "no_directory"})
 
-    if not footage_dir.exists():
-        return JSONResponse({"status": "directory_not_found"})
+    if not left_dir.exists():
+        return JSONResponse({"status": "directory_not_found", "missing": str(left_dir)})
+    if not right_dir.exists():
+        return JSONResponse({"status": "directory_not_found", "missing": str(right_dir)})
 
-    subdirs = check_subdirectories(footage_dir)
-    missing = [name for name, exists in subdirs.items() if not exists]
-    if missing:
-        return JSONResponse({"status": "missing_dirs", "missing": missing})
-
-    left_groups = scan_camera_dir(footage_dir / "Left Camera")
-    right_groups = scan_camera_dir(footage_dir / "Right Camera")
+    left_groups = [g for g in scan_camera_dir(left_dir) if len(g.files) > 1]
+    right_groups = [g for g in scan_camera_dir(right_dir) if len(g.files) > 1]
 
     def serialise_groups(groups):
         return [
@@ -47,36 +45,34 @@ async def scan():
     }
 
 
-@router.post("/create-dirs")
-async def create_dirs():
-    footage_dir = get_footage_dir()
-    if not footage_dir:
-        return JSONResponse({"status": "no_directory"})
-
-    for name in ["Left Camera", "Right Camera", "Output Footage"]:
-        (footage_dir / name).mkdir(parents=True, exist_ok=True)
-
-    return {"status": "ok"}
-
-
 @router.post("/confirm")
 async def confirm():
-    footage_dir = get_footage_dir()
-    if not footage_dir:
+    left_dir = get_left_camera_dir()
+    right_dir = get_right_camera_dir()
+    if not left_dir or not right_dir:
         return JSONResponse({"status": "no_directory"}, status_code=400)
 
-    for dir_name, camera_side in CAMERA_SIDES.items():
-        camera_dir = footage_dir / dir_name
-        groups = scan_camera_dir(camera_dir)
+    from wakepy import keep
 
-        for group in groups:
-            output_path = camera_dir / group.output_name
-            concatenate(
-                filepaths=[f.path for f in group.files],
-                output_path=output_path,
-                metadata={"status": "GROUPED", "camera_side": camera_side},
-            )
-            for fi in group.files:
-                set_metadata(fi.path, "status", "PROCESSED")
+    dirs = {"left": (left_dir, "LEFT"), "right": (right_dir, "RIGHT")}
+
+    with keep.running(on_fail="pass"):
+        for camera_dir, camera_side in dirs.values():
+            groups = [g for g in scan_camera_dir(camera_dir) if len(g.files) > 1]
+
+            for group in groups:
+                output_path = camera_dir / group.output_name
+                first_created = get_created_time(group.files[0].path)
+                concatenate(
+                    filepaths=[f.path for f in group.files],
+                    output_path=output_path,
+                    metadata={
+                        "status": "GROUPED",
+                        "camera_side": camera_side,
+                        "creation_time": first_created.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+                    },
+                )
+                for fi in group.files:
+                    set_metadata(fi.path, "status", "PROCESSED")
 
     return {"status": "ok"}

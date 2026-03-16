@@ -10,6 +10,7 @@ dependencies = [
     "ffmpeg-python",
     "static-ffmpeg",
     "opencv-python-headless",
+    "wakepy",
 ]
 
 [project.scripts]
