@@ -10,6 +10,9 @@ dependencies = [
     "ffmpeg-python",
     "static-ffmpeg",
     "opencv-python-headless",
+    "wakepy",
+    "scipy>=1.17.1",
+    "stitching",
 ]
 
 [project.scripts]

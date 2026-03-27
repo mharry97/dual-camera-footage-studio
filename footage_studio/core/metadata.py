@@ -45,10 +45,10 @@ def get_metadata(filepath: Path, key: str) -> str | None:
 
 
 def glob_mp4(directory: Path, recursive: bool = False) -> list[Path]:
-    """Return all .mp4/.MP4 files in directory, sorted by name."""
+    """Return all .mp4/.MP4 files in directory, sorted by name. Excludes hidden directories."""
     prefix = "**/" if recursive else ""
     files = set(directory.glob(f"{prefix}*.mp4")) | set(directory.glob(f"{prefix}*.MP4"))
-    return sorted(files)
+    return sorted(f for f in files if not any(part.startswith(".") for part in f.relative_to(directory).parts))
 
 
 def get_files_by_status(
@@ -58,5 +58,14 @@ def get_files_by_status(
     results = []
     for filepath in glob_mp4(directory, recursive=recursive):
         if get_metadata(filepath, "status") == status:
+            results.append(filepath)
+    return results
+
+
+def get_files_without_status(directory: Path, recursive: bool = False) -> list[Path]:
+    """Return all MP4 files in directory that have no status metadata tag."""
+    results = []
+    for filepath in glob_mp4(directory, recursive=recursive):
+        if get_metadata(filepath, "status") is None:
             results.append(filepath)
     return results

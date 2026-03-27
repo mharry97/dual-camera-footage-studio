@@ -1,7 +1,11 @@
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import ffmpeg
+
+# DJI filenames encode recording start time: DJI_YYYYMMDDHHMMSS_NNNN_*.MP4
+_DJI_TIMESTAMP_RE = re.compile(r"DJI_(\d{14})_")
 
 
 def get_video_duration(filepath: Path) -> float:
@@ -18,6 +22,9 @@ def get_created_time(filepath: Path) -> datetime:
     creation_time = tags_lower.get("creation_time")
     if creation_time:
         return datetime.fromisoformat(creation_time.replace("Z", "+00:00"))
+    m = _DJI_TIMESTAMP_RE.search(filepath.name)
+    if m:
+        return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
     return datetime.fromtimestamp(filepath.stat().st_ctime, tz=timezone.utc)
 
 

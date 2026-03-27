@@ -15,6 +15,16 @@ def save_settings(data: dict) -> None:
     SETTINGS_FILE.write_text(json.dumps(data, indent=2))
 
 
-def get_footage_dir() -> Path | None:
-    footage_dir = load_settings().get("footage_dir")
-    return Path(footage_dir) if footage_dir else None
+def get_left_camera_dir() -> Path | None:
+    d = load_settings().get("left_camera_dir")
+    return Path(d) if d else None
+
+
+def get_right_camera_dir() -> Path | None:
+    d = load_settings().get("right_camera_dir")
+    return Path(d) if d else None
+
+
+def get_output_dir() -> Path | None:
+    d = load_settings().get("output_dir")
+    return Path(d) if d else None

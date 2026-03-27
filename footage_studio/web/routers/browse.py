@@ -1,26 +1,20 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from footage_studio.core import check_subdirectories, get_footage_dir, glob_mp4
+from footage_studio.core import get_output_dir, glob_mp4
 
 router = APIRouter(prefix="/api/browse")
 
 
 @router.get("/scan")
 async def scan():
-    footage_dir = get_footage_dir()
-    if not footage_dir:
+    output_dir = get_output_dir()
+    if not output_dir:
         return JSONResponse({"status": "no_directory"})
 
-    if not footage_dir.exists():
+    if not output_dir.exists():
         return JSONResponse({"status": "directory_not_found"})
 
-    subdirs = check_subdirectories(footage_dir)
-    missing = [name for name, exists in subdirs.items() if not exists]
-    if missing:
-        return JSONResponse({"status": "missing_dirs", "missing": missing})
-
-    output_dir = footage_dir / "Output Footage"
     files = sorted(glob_mp4(output_dir, recursive=True), key=lambda f: f.stat().st_mtime, reverse=True)
 
     return {

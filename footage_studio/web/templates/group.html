@@ -78,7 +78,7 @@
     const totalGroups = data.left.length + data.right.length;
 
     if (totalGroups === 0) {
-      message.textContent = 'No unprocessed files found.';
+      message.innerHTML = 'No groups found. <a href="/stitch">Continue to stitch page &rarr;</a>';
       return;
     }
 
