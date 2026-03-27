@@ -1,3 +1,6 @@
+import contextlib
+import shutil
+import subprocess
 from pathlib import Path
 
 SUBDIRECTORIES = ["Left Camera", "Right Camera", "Output Footage"]

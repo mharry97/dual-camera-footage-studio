@@ -51,7 +51,7 @@ def scan_camera_dir(camera_dir: Path) -> list[Group]:
     for fi in unprocessed[1:]:
         prev = current.files[-1]
         finish = prev.created + timedelta(seconds=prev.duration)
-        if abs((fi.created - finish).total_seconds()) <= 1:
+        if abs((fi.created - finish).total_seconds()) <= 5:
             current.files.append(fi)
         else:
             groups.append(current)

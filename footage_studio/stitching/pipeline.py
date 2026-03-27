@@ -5,51 +5,60 @@ from pathlib import Path
 from typing import Callable
 
 from footage_studio.core import set_metadata
-from footage_studio.processing import sync_trim
+from footage_studio.processing.trim import compute_sync_offsets
 from footage_studio.stitching.calibration import CalibrationResult
+from footage_studio.stitching.video_io import open_frame_reader, probe_video
 
 # Set to True during development to keep source files after stitching
 KEEP_SOURCES = True
 
 
-def _blend_weights(
-    H_warp: np.ndarray,
-    offset: tuple[int, int],
-    out_w: int,
-    out_h: int,
-    frame_h: int,
+def _precompute_blend_weights(
+    cal: CalibrationResult,
     frame_w: int,
+    frame_h: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Precompute per-pixel blend weights for left and right cameras on the output canvas.
-    Uses distance transform for smooth feathering in the overlap region.
-    Returns (weight_left, weight_right) as float32 arrays of shape (out_h, out_w, 3).
+    Return float32 blend weight arrays (out_h, out_w) for cameras 0 and 1.
+
+    If seam masks are available, uses hard-cut seam blending with a thin
+    feather (~30px) near the seam boundary. Falls back to distance-transform
+    feathering if seam masks are absent.
     """
-    mask_frame = np.ones((frame_h, frame_w), dtype=np.uint8) * 255
+    out_w, out_h = cal.out_w, cal.out_h
 
-    # Coverage of left camera (warped onto canvas)
-    warped_mask_left = cv2.warpPerspective(mask_frame, H_warp, (out_w, out_h))
+    if cal.seam_masks:
+        # Feather-blend within a narrow band around the seam
+        FEATHER_RADIUS = 30
+        kernel = np.ones((FEATHER_RADIUS * 2 + 1, FEATHER_RADIUS * 2 + 1), np.float32)
+        kernel /= kernel.sum()
+        w0 = cv2.filter2D(
+            (cal.seam_masks[0] > 0).astype(np.float32), -1, kernel
+        ).clip(0, 1)
+        w1 = 1.0 - w0
+        return w0.astype(np.float32), w1.astype(np.float32)
 
-    # Coverage of right camera (placed at offset)
-    mask_right_canvas = np.zeros((out_h, out_w), dtype=np.uint8)
-    x_off, y_off = offset
-    mask_right_canvas[y_off:y_off + frame_h, x_off:x_off + frame_w] = 255
+    # Fallback: distance-transform feathering
+    solid_mask = np.ones((frame_h, frame_w), dtype=np.uint8) * 255
+    canvas_masks = []
+    for (map_x, map_y), (cx, cy), (ww, wh) in zip(cal.maps, cal.corners, cal.warped_sizes):
+        warped_mask = cv2.remap(solid_mask, map_x, map_y, cv2.INTER_NEAREST)
+        canvas_mask = np.zeros((out_h, out_w), dtype=np.uint8)
+        canvas_mask[cy:cy + wh, cx:cx + ww] = warped_mask[:wh, :ww]
+        canvas_masks.append(canvas_mask)
 
-    # Distance transform gives distance-to-edge within coverage → used as blend weight
-    dist_left = cv2.distanceTransform((warped_mask_left > 0).astype(np.uint8), cv2.DIST_L2, 5)
-    dist_right = cv2.distanceTransform((mask_right_canvas > 0).astype(np.uint8), cv2.DIST_L2, 5)
+    dist_0 = cv2.distanceTransform((canvas_masks[0] > 0).astype(np.uint8), cv2.DIST_L2, 5)
+    dist_1 = cv2.distanceTransform((canvas_masks[1] > 0).astype(np.uint8), cv2.DIST_L2, 5)
+    total = dist_0 + dist_1
+    total = np.where(total == 0, 1.0, total)
+    return (dist_0 / total).astype(np.float32), (dist_1 / total).astype(np.float32)
 
-    total = dist_left + dist_right
-    total = np.where(total == 0, 1.0, total)  # avoid division by zero
 
-    w_left = (dist_left / total).astype(np.float32)
-    w_right = (dist_right / total).astype(np.float32)
-
-    # Expand to 3 channels
-    return (
-        np.stack([w_left, w_left, w_left], axis=-1),
-        np.stack([w_right, w_right, w_right], axis=-1),
-    )
+def _apply_gain(frame: np.ndarray, gain: np.ndarray) -> np.ndarray:
+    """Apply per-channel exposure gain to a frame."""
+    if np.allclose(gain, 1.0):
+        return frame
+    return np.clip(frame.astype(np.float32) * gain[np.newaxis, np.newaxis, :], 0, 255).astype(np.uint8)
 
 
 def stitch_session(
@@ -60,29 +69,16 @@ def stitch_session(
     progress_callback: Callable[[int, int], None] | None = None,
     delete_sources: bool = not KEEP_SOURCES,
 ) -> None:
-    """
-    Stitch a left/right video pair into a single panoramic video.
-
-    Steps:
-    1. Sync-trim both videos to their shared time window
-    2. Precompute blend weight maps
-    3. For each frame pair: warp left with H_warp, blend with right, pipe to ffmpeg
-    4. Write PANORAMIC metadata to output
-    5. Delete source files if delete_sources=True
-    """
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    tmp_left = output.parent / "_tmp_left.mp4"
-    tmp_right = output.parent / "_tmp_right.mp4"
     try:
-        sync_trim(left, right, tmp_left, tmp_right)
-        _stitch_trimmed(tmp_left, tmp_right, output, cal, progress_callback)
+        left_offset, right_offset, duration = compute_sync_offsets(
+            left, right, log_path=output.parent / "sync_debug.log"
+        )
+        _stitch_trimmed(left, right, output, cal, progress_callback, left_offset, right_offset, duration)
     except Exception:
         output.unlink(missing_ok=True)
         raise
-    finally:
-        tmp_left.unlink(missing_ok=True)
-        tmp_right.unlink(missing_ok=True)
 
     set_metadata(output, "status", "PANORAMIC")
 
@@ -97,68 +93,73 @@ def _stitch_trimmed(
     output: Path,
     cal: CalibrationResult,
     progress_callback: Callable[[int, int], None] | None,
+    left_offset_s: float = 0.0,
+    right_offset_s: float = 0.0,
+    duration_s: float | None = None,
 ) -> None:
-    cap_left = cv2.VideoCapture(str(left))
-    cap_right = cv2.VideoCapture(str(right))
+    frame_w, frame_h, fps, _ = probe_video(left)
+    _, _, fps_right, _ = probe_video(right)
+    if abs(fps - fps_right) > 0.1:
+        import warnings
+        warnings.warn(
+            f"Frame rate mismatch: left={fps:.3f}fps, right={fps_right:.3f}fps"
+            " — output may drift over time"
+        )
+
+    total_frames = int(duration_s * fps) if duration_s is not None else None
+    out_w, out_h = cal.out_w, cal.out_h
+
+    (map_x_0, map_y_0), (cx0, cy0), (ww0, wh0) = cal.maps[0], cal.corners[0], cal.warped_sizes[0]
+    (map_x_1, map_y_1), (cx1, cy1), (ww1, wh1) = cal.maps[1], cal.corners[1], cal.warped_sizes[1]
+
+    gain_0 = cal.gains[0] if cal.gains else np.ones(3, dtype=np.float32)
+    gain_1 = cal.gains[1] if cal.gains else np.ones(3, dtype=np.float32)
+
+    w0, w1 = _precompute_blend_weights(cal, frame_w, frame_h)
+    w0_3ch = np.stack([w0, w0, w0], axis=-1)
+    w1_3ch = np.stack([w1, w1, w1], axis=-1)
+
+    canvas_0 = np.zeros((out_h, out_w, 3), dtype=np.float32)
+    canvas_1 = np.zeros((out_h, out_w, 3), dtype=np.float32)
+
+    encode_process = (
+        ffmpeg
+        .input("pipe:", format="rawvideo", pix_fmt="bgr24", s=f"{out_w}x{out_h}", r=fps)
+        .output(str(output), pix_fmt="yuv420p", vcodec="libx264", crf=18, movflags="+faststart")
+        .overwrite_output()
+        .run_async(pipe_stdin=True, pipe_stderr=True)
+    )
+
     try:
-        fps = cap_left.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap_left.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        ret, first = cap_left.read()
-        if not ret:
-            raise RuntimeError("Cannot read first frame from left video")
-        cap_left.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
-        frame_h, frame_w = first.shape[:2]
-        out_w, out_h = cal.out_w, cal.out_h
-        x_off, y_off = cal.offset
-
-        weight_left, weight_right = _blend_weights(
-            cal.H_warp, cal.offset, out_w, out_h, frame_h, frame_w
-        )
-
-        # Pre-allocate canvas buffers to avoid per-frame allocation
-        canvas_left = np.zeros((out_h, out_w, 3), dtype=np.float32)
-        canvas_right = np.zeros((out_h, out_w, 3), dtype=np.float32)
-
-        process = (
-            ffmpeg
-            .input("pipe:", format="rawvideo", pix_fmt="bgr24", s=f"{out_w}x{out_h}", r=fps)
-            .output(str(output), pix_fmt="yuv420p", vcodec="libx264", crf=18)
-            .overwrite_output()
-            .run_async(pipe_stdin=True, pipe_stderr=True)
-        )
-
-        try:
+        with open_frame_reader(left, left_offset_s, frame_w, frame_h) as read_left, \
+             open_frame_reader(right, right_offset_s, frame_w, frame_h) as read_right:
             frame_num = 0
-            while True:
-                ret_l, frame_left = cap_left.read()
-                ret_r, frame_right = cap_right.read()
-                if not ret_l or not ret_r:
+            while total_frames is None or frame_num < total_frames:
+                frame_left = read_left()
+                frame_right = read_right()
+                if frame_left is None or frame_right is None:
                     break
 
-                # Warp left frame onto canvas
-                warped_left = cv2.warpPerspective(frame_left, cal.H_warp, (out_w, out_h))
+                frame_left = _apply_gain(frame_left, gain_0)
+                frame_right = _apply_gain(frame_right, gain_1)
 
-                # Place both frames into float canvas buffers
-                np.copyto(canvas_left, warped_left.astype(np.float32))
-                canvas_right[:] = 0
-                canvas_right[y_off:y_off + frame_h, x_off:x_off + frame_w] = \
-                    frame_right.astype(np.float32)
+                warped_0 = cv2.remap(frame_left, map_x_0, map_y_0, cv2.INTER_LINEAR)
+                warped_1 = cv2.remap(frame_right, map_x_1, map_y_1, cv2.INTER_LINEAR)
 
-                # Blend using precomputed weight maps
-                result = (canvas_left * weight_left + canvas_right * weight_right).astype(np.uint8)
+                canvas_0[:] = 0
+                canvas_1[:] = 0
+                canvas_0[cy0:cy0 + wh0, cx0:cx0 + ww0] = warped_0[:wh0, :ww0].astype(np.float32)
+                canvas_1[cy1:cy1 + wh1, cx1:cx1 + ww1] = warped_1[:wh1, :ww1].astype(np.float32)
 
-                process.stdin.write(result.tobytes())
+                result = (canvas_0 * w0_3ch + canvas_1 * w1_3ch).astype(np.uint8)
+
+                encode_process.stdin.write(result.tobytes())
                 frame_num += 1
                 if progress_callback:
-                    progress_callback(frame_num, total_frames)
-        finally:
-            process.stdin.close()
-            stderr_output = process.stderr.read().decode(errors="replace") if process.stderr else ""
-            returncode = process.wait()
-            if returncode != 0:
-                raise RuntimeError(f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}")
+                    progress_callback(frame_num, total_frames or frame_num)
     finally:
-        cap_left.release()
-        cap_right.release()
+        encode_process.stdin.close()
+        stderr_output = encode_process.stderr.read().decode(errors="replace") if encode_process.stderr else ""
+        returncode = encode_process.wait()
+        if returncode != 0:
+            raise RuntimeError(f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}")

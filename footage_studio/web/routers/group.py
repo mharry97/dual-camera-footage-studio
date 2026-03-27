@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from footage_studio.core import get_created_time, get_left_camera_dir, get_right_camera_dir, set_metadata
+from footage_studio.core import get_created_time, get_left_camera_dir, get_right_camera_dir
 from footage_studio.processing import concatenate, scan_camera_dir
 
 router = APIRouter(prefix="/api/group")
@@ -72,7 +72,9 @@ async def confirm():
                         "creation_time": first_created.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
                     },
                 )
+                processed_dir = camera_dir / "_processed"
+                processed_dir.mkdir(exist_ok=True)
                 for fi in group.files:
-                    set_metadata(fi.path, "status", "PROCESSED")
+                    fi.path.rename(processed_dir / fi.path.name)
 
     return {"status": "ok"}

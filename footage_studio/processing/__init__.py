@@ -1,9 +1,11 @@
+from footage_studio.processing.audio_sync import audio_offset
 from footage_studio.processing.concat import concatenate
 from footage_studio.processing.grouping import Group, FileInfo, scan_camera_dir
 from footage_studio.processing.session_matching import Session, scan_sessions
 from footage_studio.processing.trim import trim, sync_trim
 
 __all__ = [
+    "audio_offset",
     "concatenate",
     "Group",
     "FileInfo",
