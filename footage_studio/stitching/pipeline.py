@@ -125,7 +125,7 @@ def _stitch_trimmed(
     encode_process = (
         ffmpeg
         .input("pipe:", format="rawvideo", pix_fmt="bgr24", s=f"{out_w}x{out_h}", r=fps)
-        .output(str(output), pix_fmt="yuv420p", vcodec="libx264", crf=18, movflags="+faststart")
+        .output(str(output), pix_fmt="yuv420p", vcodec="libx264", crf=23, movflags="+faststart")
         .overwrite_output()
         .run_async(pipe_stdin=True, pipe_stderr=True)
     )
