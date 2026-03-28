@@ -120,7 +120,6 @@ def _run_job(job: Job, output_dir: Path) -> None:
                     cal=cal,
                     progress_callback=progress_cb,
                 )
-                cal.save(session_output_dir / f"{name}_calibration.npz")
             except Exception as e:
                 job.progress = JobProgress(
                     stage="failed", session_index=i, total_sessions=n,
