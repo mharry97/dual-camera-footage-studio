@@ -1,6 +1,7 @@
 import cv2
 import ffmpeg
 import numpy as np
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -130,6 +131,15 @@ def _stitch_trimmed(
         .run_async(pipe_stdin=True, pipe_stderr=True)
     )
 
+    # Drain stderr in a background thread to prevent pipe buffer deadlock
+    # (ffmpeg writes progress every ~0.5s; without draining it fills the 64KB OS buffer)
+    stderr_chunks: list[bytes] = []
+    def _drain_stderr():
+        for chunk in iter(lambda: encode_process.stderr.read(4096), b""):
+            stderr_chunks.append(chunk)
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
     try:
         with open_frame_reader(left, left_offset_s, frame_w, frame_h) as read_left, \
              open_frame_reader(right, right_offset_s, frame_w, frame_h) as read_right:
@@ -159,7 +169,8 @@ def _stitch_trimmed(
                     progress_callback(frame_num, total_frames or frame_num)
     finally:
         encode_process.stdin.close()
-        stderr_output = encode_process.stderr.read().decode(errors="replace") if encode_process.stderr else ""
+        stderr_thread.join()
+        stderr_output = b"".join(stderr_chunks).decode(errors="replace")
         returncode = encode_process.wait()
         if returncode != 0:
             raise RuntimeError(f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}")
