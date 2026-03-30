@@ -1,15 +1,14 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from footage_studio.core import get_created_time, get_left_camera_dir, get_right_camera_dir
+from footage_studio.core import (
+    get_created_time,
+    get_left_camera_dir,
+    get_right_camera_dir,
+)
 from footage_studio.processing import concatenate, scan_camera_dir
 
 router = APIRouter(prefix="/api/group")
-
-CAMERA_SIDES = {
-    "left": "LEFT",
-    "right": "RIGHT",
-}
 
 
 @router.get("/scan")
@@ -54,10 +53,8 @@ async def confirm():
 
     from wakepy import keep
 
-    dirs = {"left": (left_dir, "LEFT"), "right": (right_dir, "RIGHT")}
-
     with keep.running(on_fail="pass"):
-        for camera_dir, camera_side in dirs.values():
+        for camera_dir in [left_dir, right_dir]:
             groups = [g for g in scan_camera_dir(camera_dir) if len(g.files) > 1]
 
             for group in groups:
@@ -67,8 +64,6 @@ async def confirm():
                     filepaths=[f.path for f in group.files],
                     output_path=output_path,
                     metadata={
-                        "status": "GROUPED",
-                        "camera_side": camera_side,
                         "creation_time": first_created.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
                     },
                 )

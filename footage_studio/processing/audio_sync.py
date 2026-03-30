@@ -4,8 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.signal import correlate
 
-SAMPLE_RATE = 8000  # Hz — enough resolution for sync, cheap to process
-# A correlation peak below this ratio (vs theoretical max) is considered unreliable
+SAMPLE_RATE = 8000
 CONFIDENCE_THRESHOLD = 0.03
 
 
