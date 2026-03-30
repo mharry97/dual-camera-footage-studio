@@ -35,8 +35,7 @@ SEAM_MEGAPIX = 0.1  # resolution for seam finding (speed vs quality)
 
 class _CalibrationStitcher(Stitcher):
     """
-    Stops after camera estimation + wave correction + scale — skips warping
-    and blending so calibration runs in seconds rather than minutes.
+    Stops after camera estimation + wave correction + scale 
     """
 
     def stitch(self, images, feature_masks=[]):  # noqa: B006

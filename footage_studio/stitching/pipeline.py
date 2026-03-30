@@ -1,14 +1,18 @@
-import cv2
-import ffmpeg
-import numpy as np
+import re
+import shutil
+import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Callable
 
-from footage_studio.core import set_metadata
+import cv2
+import numpy as np
+import static_ffmpeg
+
 from footage_studio.processing.trim import compute_sync_offsets
 from footage_studio.stitching.calibration import CalibrationResult
-from footage_studio.stitching.video_io import open_frame_reader, probe_video
+from footage_studio.stitching.video_io import probe_video
 
 # Set to True during development to keep source files after stitching
 KEEP_SOURCES = True
@@ -56,10 +60,40 @@ def _precompute_blend_weights(
 
 
 def _apply_gain(frame: np.ndarray, gain: np.ndarray) -> np.ndarray:
-    """Apply per-channel exposure gain to a frame."""
+    """Apply per-channel exposure gain to a frame (BGR order)."""
     if np.allclose(gain, 1.0):
         return frame
     return np.clip(frame.astype(np.float32) * gain[np.newaxis, np.newaxis, :], 0, 255).astype(np.uint8)
+
+
+def _save_canvas_maps(cal: CalibrationResult, tmp_dir: Path) -> list[tuple[Path, Path]]:
+    """
+    Write canvas-sized uint16 remap tables as raw gray16le binary files.
+
+    Each map file is out_w × out_h uint16 values (row-major). Values are
+    source pixel coordinates. Pixels outside the warped region are set to
+    65535 (out-of-range → ffmpeg remap fills them with black).
+    """
+    out_w, out_h = cal.out_w, cal.out_h
+    INVALID = np.uint16(65535)
+    paths = []
+    for i, ((map_x, map_y), (cx, cy), (ww, wh)) in enumerate(
+        zip(cal.maps, cal.corners, cal.warped_sizes)
+    ):
+        canvas_x = np.full((out_h, out_w), INVALID, dtype=np.uint16)
+        canvas_y = np.full((out_h, out_w), INVALID, dtype=np.uint16)
+        h_clip = min(wh, map_x.shape[0])
+        w_clip = min(ww, map_x.shape[1])
+        mx = np.clip(np.round(map_x[:h_clip, :w_clip]), 0, 65534).astype(np.uint16)
+        my = np.clip(np.round(map_y[:h_clip, :w_clip]), 0, 65534).astype(np.uint16)
+        canvas_x[cy:cy + h_clip, cx:cx + w_clip] = mx
+        canvas_y[cy:cy + h_clip, cx:cx + w_clip] = my
+        xp = tmp_dir / f"xmap{i}.raw"
+        yp = tmp_dir / f"ymap{i}.raw"
+        canvas_x.tofile(str(xp))
+        canvas_y.tofile(str(yp))
+        paths.append((xp, yp))
+    return paths
 
 
 def stitch_session(
@@ -76,19 +110,17 @@ def stitch_session(
         left_offset, right_offset, duration = compute_sync_offsets(
             left, right, log_path=output.parent / "sync_debug.log"
         )
-        _stitch_trimmed(left, right, output, cal, progress_callback, left_offset, right_offset, duration)
+        _stitch_ffmpeg(left, right, output, cal, progress_callback, left_offset, right_offset, duration)
     except Exception:
         output.unlink(missing_ok=True)
         raise
-
-    set_metadata(output, "status", "PANORAMIC")
 
     if delete_sources:
         left.unlink(missing_ok=True)
         right.unlink(missing_ok=True)
 
 
-def _stitch_trimmed(
+def _stitch_ffmpeg(
     left: Path,
     right: Path,
     output: Path,
@@ -98,6 +130,23 @@ def _stitch_trimmed(
     right_offset_s: float = 0.0,
     duration_s: float | None = None,
 ) -> None:
+    """
+    Stitch using an ffmpeg filter graph — no Python frame loop.
+
+    Pipeline:
+      left.mp4 ──[colorchannelmixer]──[remap(xmap0,ymap0)]──┐
+                                                              ├──[alphamerge+overlay]──► output.mp4
+      right.mp4 ──[colorchannelmixer]──[remap(xmap1,ymap1)]──┘
+                                        ↑
+                              weight0.png (cam0 blend weight as alpha)
+
+    Map files are canvas-sized gray16le uint16 raw binary — ffmpeg remap
+    filter expects integer pixel coordinates in this format.
+    """
+    static_ffmpeg.add_paths()
+    ffmpeg_bin = shutil.which("ffmpeg")
+    assert ffmpeg_bin, "ffmpeg binary not found after static_ffmpeg.add_paths()"
+
     frame_w, frame_h, fps, _ = probe_video(left)
     _, _, fps_right, _ = probe_video(right)
     if abs(fps - fps_right) > 0.1:
@@ -110,67 +159,107 @@ def _stitch_trimmed(
     total_frames = int(duration_s * fps) if duration_s is not None else None
     out_w, out_h = cal.out_w, cal.out_h
 
-    (map_x_0, map_y_0), (cx0, cy0), (ww0, wh0) = cal.maps[0], cal.corners[0], cal.warped_sizes[0]
-    (map_x_1, map_y_1), (cx1, cy1), (ww1, wh1) = cal.maps[1], cal.corners[1], cal.warped_sizes[1]
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp_dir = Path(tmp_str)
 
-    gain_0 = cal.gains[0] if cal.gains else np.ones(3, dtype=np.float32)
-    gain_1 = cal.gains[1] if cal.gains else np.ones(3, dtype=np.float32)
+        map_paths = _save_canvas_maps(cal, tmp_dir)
 
-    w0, w1 = _precompute_blend_weights(cal, frame_w, frame_h)
-    w0_3ch = np.stack([w0, w0, w0], axis=-1)
-    w1_3ch = np.stack([w1, w1, w1], axis=-1)
+        w0, _ = _precompute_blend_weights(cal, frame_w, frame_h)
+        weight_path = tmp_dir / "weight0.png"
+        cv2.imwrite(str(weight_path), (w0 * 255).astype(np.uint8))
 
-    canvas_0 = np.zeros((out_h, out_w, 3), dtype=np.float32)
-    canvas_1 = np.zeros((out_h, out_w, 3), dtype=np.float32)
+        gain_0 = cal.gains[0] if cal.gains else np.ones(3, dtype=np.float32)
+        gain_1 = cal.gains[1] if cal.gains else np.ones(3, dtype=np.float32)
 
-    encode_process = (
-        ffmpeg
-        .input("pipe:", format="rawvideo", pix_fmt="bgr24", s=f"{out_w}x{out_h}", r=fps)
-        .output(str(output), pix_fmt="yuv420p", vcodec="libx264", crf=23, movflags="+faststart")
-        .overwrite_output()
-        .run_async(pipe_stdin=True, pipe_stderr=True)
-    )
+        def _gain_filter(gains: np.ndarray) -> str:
+            # gains are BGR (OpenCV); colorchannelmixer works in RGB after format=rgb24
+            # rgb24 channel order: R=index0, G=index1, B=index2
+            # gains BGR: gains[2]=R, gains[1]=G, gains[0]=B
+            if np.allclose(gains, 1.0):
+                return "format=rgb24"
+            r, g, b = float(gains[2]), float(gains[1]), float(gains[0])
+            return f"format=rgb24,colorchannelmixer=rr={r:.6f}:gg={g:.6f}:bb={b:.6f}"
 
-    # Drain stderr in a background thread to prevent pipe buffer deadlock
-    # (ffmpeg writes progress every ~0.5s; without draining it fills the 64KB OS buffer)
-    stderr_chunks: list[bytes] = []
-    def _drain_stderr():
-        for chunk in iter(lambda: encode_process.stderr.read(4096), b""):
-            stderr_chunks.append(chunk)
-    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
-    stderr_thread.start()
+        map_size = f"{out_w}x{out_h}"
+        fps_str = f"{fps:.6f}"
 
-    try:
-        with open_frame_reader(left, left_offset_s, frame_w, frame_h) as read_left, \
-             open_frame_reader(right, right_offset_s, frame_w, frame_h) as read_right:
-            frame_num = 0
-            while total_frames is None or frame_num < total_frames:
-                frame_left = read_left()
-                frame_right = read_right()
-                if frame_left is None or frame_right is None:
-                    break
+        # Input indices:
+        # 0 = left video, 1 = right video
+        # 2 = xmap0, 3 = ymap0, 4 = xmap1, 5 = ymap1
+        # 6 = weight0.png
+        filter_complex = ";".join([
+            f"[0]{_gain_filter(gain_0)}[lg]",
+            f"[1]{_gain_filter(gain_1)}[rg]",
+            "[lg][2][3]remap[w0]",
+            "[rg][4][5]remap[w1]",
+            "[w0]format=rgba[w0a]",
+            "[w0a][6]alphamerge[w0_alpha]",
+            "[w1][w0_alpha]overlay=format=yuv420:shortest=1[out]",
+        ])
 
-                frame_left = _apply_gain(frame_left, gain_0)
-                frame_right = _apply_gain(frame_right, gain_1)
+        map_loop_args = [
+            "-stream_loop", "-1",
+            "-f", "rawvideo",
+            "-pix_fmt", "gray16le",
+            "-s", map_size,
+            "-r", fps_str,
+        ]
 
-                warped_0 = cv2.remap(frame_left, map_x_0, map_y_0, cv2.INTER_LINEAR)
-                warped_1 = cv2.remap(frame_right, map_x_1, map_y_1, cv2.INTER_LINEAR)
+        cmd = [ffmpeg_bin, "-y"]
+        # Left video
+        cmd += ["-hwaccel", "auto"]
+        cmd += ["-ss", str(left_offset_s)]
+        if duration_s is not None:
+            cmd += ["-t", str(duration_s)]
+        cmd += ["-i", str(left)]
+        # Right video
+        cmd += ["-hwaccel", "auto"]
+        cmd += ["-ss", str(right_offset_s)]
+        if duration_s is not None:
+            cmd += ["-t", str(duration_s)]
+        cmd += ["-i", str(right)]
+        # Map files (looped single-frame rawvideo)
+        (xmap0, ymap0), (xmap1, ymap1) = map_paths[0], map_paths[1]
+        cmd += map_loop_args + ["-i", str(xmap0)]
+        cmd += map_loop_args + ["-i", str(ymap0)]
+        cmd += map_loop_args + ["-i", str(xmap1)]
+        cmd += map_loop_args + ["-i", str(ymap1)]
+        # Weight image (looped)
+        cmd += ["-loop", "1", "-i", str(weight_path)]
 
-                canvas_0[:] = 0
-                canvas_1[:] = 0
-                canvas_0[cy0:cy0 + wh0, cx0:cx0 + ww0] = warped_0[:wh0, :ww0].astype(np.float32)
-                canvas_1[cy1:cy1 + wh1, cx1:cx1 + ww1] = warped_1[:wh1, :ww1].astype(np.float32)
+        cmd += ["-filter_complex", filter_complex, "-map", "[out]"]
+        cmd += ["-pix_fmt", "yuv420p", "-vcodec", "libx264", "-crf", "23", "-movflags", "+faststart"]
+        cmd += [str(output)]
 
-                result = (canvas_0 * w0_3ch + canvas_1 * w1_3ch).astype(np.uint8)
+        process = subprocess.Popen(cmd, stderr=subprocess.PIPE)
 
-                encode_process.stdin.write(result.tobytes())
-                frame_num += 1
+        # Drain stderr in background, parse frame counts for progress callback
+        stderr_chunks: list[bytes] = []
+
+        def _drain_stderr() -> None:
+            buf = b""
+            assert process.stderr is not None
+            for chunk in iter(lambda: process.stderr.read(256), b""):  # type: ignore[union-attr]
+                stderr_chunks.append(chunk)
                 if progress_callback:
-                    progress_callback(frame_num, total_frames or frame_num)
-    finally:
-        encode_process.stdin.close()
+                    buf += chunk
+                    for m in re.finditer(rb"frame=\s*(\d+)", buf):
+                        try:
+                            frame_num = int(m.group(1))
+                            progress_callback(frame_num, total_frames or frame_num)
+                        except ValueError:
+                            pass
+                    # Keep only unparsed tail to avoid quadratic growth
+                    last = buf.rfind(b"frame=")
+                    buf = buf[last:] if last >= 0 else buf[-64:]
+
+        stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        stderr_thread.start()
         stderr_thread.join()
-        stderr_output = b"".join(stderr_chunks).decode(errors="replace")
-        returncode = encode_process.wait()
+
+        returncode = process.wait()
         if returncode != 0:
-            raise RuntimeError(f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}")
+            stderr_output = b"".join(stderr_chunks).decode(errors="replace")
+            raise RuntimeError(
+                f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}"
+            )

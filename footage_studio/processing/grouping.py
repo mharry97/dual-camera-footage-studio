@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from footage_studio.core import get_created_time, get_metadata, get_video_duration, glob_mp4
+from footage_studio.core import get_created_time, get_video_duration, glob_mp4
 
 
 @dataclass
@@ -25,14 +25,14 @@ class Group:
     @property
     def output_name(self) -> str:
         """Filename-safe version of the group name."""
-        return self.files[0].created.strftime("%Y-%m-%d_%H-%M") + ".mp4"
+        return self.files[0].created.strftime("%Y-%m-%d_%H-%M") + "_grouped.mp4"
 
 
 def scan_camera_dir(camera_dir: Path) -> list[Group]:
     """Scan a camera directory and group consecutive clips by recording session."""
     unprocessed = []
     for fp in glob_mp4(camera_dir):
-        if get_metadata(fp, "status") is None:
+        if not fp.stem.endswith("_grouped"):
             created = get_created_time(fp)
             duration = get_video_duration(fp)
             unprocessed.append(FileInfo(fp, fp.name, created, duration))

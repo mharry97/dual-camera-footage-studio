@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from footage_studio.core import get_created_time, get_files_by_status, get_files_without_status
+from footage_studio.core import get_created_time, glob_mp4
 
 
 @dataclass
@@ -12,15 +12,9 @@ class Session:
 
 
 def scan_sessions(left_dir: Path, right_dir: Path) -> list[Session]:
-    """Match left and right camera files (GROUPED or ungrouped) into sessions by created time (within 60s)."""
-    left_files = (
-        get_files_by_status(left_dir, "GROUPED")
-        + get_files_without_status(left_dir)
-    )
-    right_files = (
-        get_files_by_status(right_dir, "GROUPED")
-        + get_files_without_status(right_dir)
-    )
+    """Match left and right camera files into sessions by created time (within 60s)."""
+    left_files = glob_mp4(left_dir)
+    right_files = glob_mp4(right_dir)
 
     left_with_times = [(get_created_time(fp), fp) for fp in left_files]
     right_with_times = [(get_created_time(fp), fp) for fp in right_files]
