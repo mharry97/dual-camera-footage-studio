@@ -11,10 +11,21 @@ class Session:
     right: Path
 
 
-def scan_sessions(left_dir: Path, right_dir: Path) -> list[Session]:
-    """Match left and right camera files into sessions by created time (within 60s)."""
+def scan_sessions(
+    left_dir: Path,
+    right_dir: Path,
+    name_filter: str | None = None,
+) -> list[Session]:
+    """Match left and right camera files into sessions by created time (within 60s).
+
+    name_filter: if given, only consider files whose name contains this string
+    (e.g. "_grouped" or "_synced").
+    """
     left_files = glob_mp4(left_dir)
     right_files = glob_mp4(right_dir)
+    if name_filter:
+        left_files = [f for f in left_files if name_filter in f.name]
+        right_files = [f for f in right_files if name_filter in f.name]
 
     left_with_times = [(get_created_time(fp), fp) for fp in left_files]
     right_with_times = [(get_created_time(fp), fp) for fp in right_files]

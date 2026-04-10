@@ -107,9 +107,7 @@ def stitch_session(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        left_offset, right_offset, duration = compute_sync_offsets(
-            left, right, log_path=output.parent / "sync_debug.log"
-        )
+        left_offset, right_offset, duration, _ = compute_sync_offsets(left, right)
         _stitch_ffmpeg(left, right, output, cal, progress_callback, left_offset, right_offset, duration)
     except Exception:
         output.unlink(missing_ok=True)

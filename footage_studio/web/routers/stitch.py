@@ -21,7 +21,7 @@ async def scan():
     if not right_dir.exists():
         return JSONResponse({"status": "directory_not_found", "missing": str(right_dir)})
 
-    sessions = scan_sessions(left_dir, right_dir)
+    sessions = scan_sessions(left_dir, right_dir, name_filter="_synced")
 
     return {
         "status": "ok",

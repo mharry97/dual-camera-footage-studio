@@ -252,6 +252,15 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
     full_megapix = (frame_w * frame_h) / 1e6
     medium_scale = min(1.0, math.sqrt(MEDIUM_MEGAPIX / full_megapix))
 
+    _DETECTOR_CONFIGS = [
+        {"detector": "orb",   "nfeatures": 1000, "confidence_threshold": 0.1},
+        {"detector": "orb",   "nfeatures": 3000, "confidence_threshold": 0.1},
+        {"detector": "sift",  "nfeatures": 1000, "confidence_threshold": 0.1},
+        {"detector": "akaze", "nfeatures": 1000, "confidence_threshold": 0.1},
+        {"detector": "akaze", "nfeatures": 1000, "confidence_threshold": 0.01},
+        {"detector": "sift",  "nfeatures": 3000, "confidence_threshold": 0.01},
+    ]
+
     last_error: Exception | None = None
 
     for window_start in _window_starts(duration):
@@ -261,15 +270,17 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
         if frame_left is None or frame_right is None:
             continue
 
-        stitcher = _CalibrationStitcher(
-            confidence_threshold=0.1,
-            detector="orb",
-            nfeatures=1000,
-        )
-        try:
-            stitcher.stitch([frame_left, frame_right])
-        except Exception as e:
-            last_error = e
+        stitcher = None
+        for cfg in _DETECTOR_CONFIGS:
+            try:
+                s = _CalibrationStitcher(**cfg)
+                s.stitch([frame_left, frame_right])
+                stitcher = s
+                break
+            except Exception as e:
+                last_error = e
+
+        if stitcher is None:
             continue
 
         cal = _build_remap_result(
