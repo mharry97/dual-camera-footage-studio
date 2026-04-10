@@ -13,10 +13,12 @@ dependencies = [
     "wakepy",
     "scipy>=1.17.1",
     "stitching",
+    "matplotlib>=3.10.8",
 ]
 
 [project.scripts]
 footage-studio = "footage_studio.main:main"
+export-extrinsics = "footage_studio.stitching.export_extrinsics:main"
 
 [build-system]
 requires = ["hatchling"]

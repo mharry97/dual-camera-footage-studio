@@ -5,7 +5,7 @@ import numpy as np
 from scipy.signal import correlate
 
 SAMPLE_RATE = 8000
-CONFIDENCE_THRESHOLD = 0.03
+CONFIDENCE_THRESHOLD = 0.1
 
 
 def _extract_audio(filepath: Path) -> np.ndarray | None:

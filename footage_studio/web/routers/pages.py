@@ -17,6 +17,11 @@ async def group(request: Request):
     return templates.TemplateResponse("group.html", {"request": request})
 
 
+@router.get("/sync", response_class=HTMLResponse)
+async def sync(request: Request):
+    return templates.TemplateResponse("sync.html", {"request": request})
+
+
 @router.get("/stitch", response_class=HTMLResponse)
 async def stitch(request: Request):
     return templates.TemplateResponse("stitch.html", {"request": request})

@@ -277,3 +277,142 @@ ol {
 .camera-section-label {
   font-weight: 700;
 }
+
+/* Sync actions row (Check + Apply buttons) */
+
+.sync-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 32px;
+}
+
+.sync-actions .btn-action {
+  margin-top: 0;
+  margin-left: 0;
+}
+
+/* Sync session card */
+
+.sync-session {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border: 1px solid var(--bg-subtle);
+  border-radius: 8px;
+}
+
+.sync-session-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sync-session-name {
+  font-weight: 700;
+}
+
+.sync-files {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sync-file-label {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sync-file-name {
+  margin-right: 16px;
+}
+
+/* Sync status line */
+
+.sync-status {
+  font-size: 12px;
+  min-height: 16px;
+}
+
+.sync-status-checking { color: var(--text-muted); }
+.sync-status-ok       { color: #6aaa40; }
+.sync-status-warning  { color: #c08020; }
+.sync-status-error    { color: #c04040; }
+
+/* Frame comparison panel */
+
+.sync-frame-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--bg-subtle);
+}
+
+.sync-frame-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sync-frames {
+  display: flex;
+  gap: 16px;
+}
+
+.sync-frame-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.sync-frame-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sync-frame-img {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: var(--bg-subtle);
+  border-radius: 4px;
+  display: block;
+  object-fit: cover;
+}
+
+/* Sliders */
+
+.sync-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sync-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.sync-slider-row label {
+  width: 90px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.sync-slider-row input[type="range"] {
+  flex: 1;
+  cursor: pointer;
+}
+
+.sync-slider-val {
+  width: 72px;
+  text-align: right;
+  flex-shrink: 0;
+}

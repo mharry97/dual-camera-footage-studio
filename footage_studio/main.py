@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from footage_studio.web.routers import pages, settings
-from footage_studio.web.routers import group, stitch, browse
+from footage_studio.web.routers import group, sync, stitch, browse
 
 static_ffmpeg.add_paths()
 
@@ -17,6 +17,7 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "web" / "static"), name="s
 app.include_router(pages.router)
 app.include_router(settings.router)
 app.include_router(group.router)
+app.include_router(sync.router)
 app.include_router(stitch.router)
 app.include_router(browse.router)
 
