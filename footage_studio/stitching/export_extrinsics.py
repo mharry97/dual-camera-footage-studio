@@ -47,14 +47,25 @@ _DETECTOR_CONFIGS = [
 ]
 
 
-def _load_npz_K(npz_path: Path, frame_h: int) -> tuple[np.ndarray, np.ndarray]:
-    """Load K and distCoeff from an npz, scaling cy for the actual frame height."""
-    npz = np.load(str(npz_path))
-    K   = npz["intrinsic_matrix"].astype(np.float64).copy()
+_NPZ_CAL_W = 3840
+_NPZ_CAL_H = 2160
+
+
+def _load_npz_K(npz_path: Path, frame_w: int, frame_h: int) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Load K and distCoeff from an npz, scaling multiplicatively to the actual
+    source video resolution. Both focal lengths and principal point scale
+    proportionally with the pixel pitch change between recording modes.
+    """
+    npz  = np.load(str(npz_path))
+    K    = npz["intrinsic_matrix"].astype(np.float64).copy()
     dist = npz["distCoeff"].reshape(1, 14).astype(np.float64)
-    _NPZ_CAL_H = 2160
-    if frame_h != _NPZ_CAL_H:
-        K[1, 2] += (frame_h - _NPZ_CAL_H) / 2.0
+    scale_x = frame_w / _NPZ_CAL_W
+    scale_y = frame_h / _NPZ_CAL_H
+    K[0, 0] *= scale_x  # fx
+    K[0, 2] *= scale_x  # cx
+    K[1, 1] *= scale_y  # fy
+    K[1, 2] *= scale_y  # cy
     return K, dist
 
 
@@ -74,7 +85,7 @@ def export_extrinsics(left: Path, right: Path, npz_path: Path | None = None) -> 
     last_error: Exception | None = None
     stitcher = None
 
-    npz_K, npz_dist = _load_npz_K(npz_path, frame_h) if npz_path is not None else (None, None)
+    npz_K, npz_dist = _load_npz_K(npz_path, frame_w, frame_h) if npz_path is not None else (None, None)
 
     for window_start in _window_starts(duration):
         sample_time = window_start + WINDOW_DURATION / 2

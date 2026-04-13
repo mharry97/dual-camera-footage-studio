@@ -244,8 +244,10 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
     """
     Calibrate stitching for a left/right video pair.
 
-    Samples the middle 30-second window first, then retries up to MAX_ATTEMPTS
-    times with evenly-distributed windows. Raises RuntimeError if all attempts fail.
+    Samples up to MAX_ATTEMPTS evenly-distributed windows (middle first) and
+    picks the window with the highest feature-match confidence. Seam and
+    exposure-compensation steps run only on the winning window.
+    Raises RuntimeError if all attempts fail.
     """
     frame_w, frame_h, _, duration = probe_video(left)
 
@@ -262,6 +264,8 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
     ]
 
     last_error: Exception | None = None
+    # (confidence, stitcher, [frame_left, frame_right])
+    best: tuple[float, _CalibrationStitcher, list] | None = None
 
     for window_start in _window_starts(duration):
         sample_time = window_start + WINDOW_DURATION / 2
@@ -283,38 +287,42 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
         if stitcher is None:
             continue
 
-        cal = _build_remap_result(
-            cameras=stitcher._cameras,
-            scale=stitcher.warper.scale,
-            warper_type=stitcher.warper.warper_type,
-            frame_w=frame_w,
-            frame_h=frame_h,
-            confidence=stitcher._confidence,
-            medium_scale=medium_scale,
+        if best is None or stitcher._confidence > best[0]:
+            best = (stitcher._confidence, stitcher, [frame_left, frame_right])
+
+    if best is None:
+        raise RuntimeError(
+            f"Calibration failed for {left.name} / {right.name}: {last_error}"
         )
 
-        warped_imgs, validity_masks = _warp_frames(
-            [frame_left, frame_right], cal, frame_w, frame_h
-        )
+    _, best_stitcher, best_frames = best
 
-        try:
-            cal.seam_masks = _compute_seam_masks(
-                warped_imgs, validity_masks, cal.corners, cal.warped_sizes, cal.out_w, cal.out_h
-            )
-        except Exception as e:
-            print(f"Warning: seam finding failed ({e}), falling back to distance-transform blend")
-            cal.seam_masks = []
-
-        try:
-            cal.gains = _compute_exposure_gains(
-                warped_imgs, validity_masks, cal.corners, cal.warped_sizes
-            )
-        except Exception as e:
-            print(f"Warning: exposure compensation failed ({e}), skipping")
-            cal.gains = []
-
-        return cal
-
-    raise RuntimeError(
-        f"Calibration failed for {left.name} / {right.name}: {last_error}"
+    cal = _build_remap_result(
+        cameras=best_stitcher._cameras,
+        scale=best_stitcher.warper.scale,
+        warper_type=best_stitcher.warper.warper_type,
+        frame_w=frame_w,
+        frame_h=frame_h,
+        confidence=best_stitcher._confidence,
+        medium_scale=medium_scale,
     )
+
+    warped_imgs, validity_masks = _warp_frames(best_frames, cal, frame_w, frame_h)
+
+    try:
+        cal.seam_masks = _compute_seam_masks(
+            warped_imgs, validity_masks, cal.corners, cal.warped_sizes, cal.out_w, cal.out_h
+        )
+    except Exception as e:
+        print(f"Warning: seam finding failed ({e}), falling back to distance-transform blend")
+        cal.seam_masks = []
+
+    try:
+        cal.gains = _compute_exposure_gains(
+            warped_imgs, validity_masks, cal.corners, cal.warped_sizes
+        )
+    except Exception as e:
+        print(f"Warning: exposure compensation failed ({e}), skipping")
+        cal.gains = []
+
+    return cal

@@ -10,7 +10,6 @@ import cv2
 import numpy as np
 import static_ffmpeg
 
-from footage_studio.processing.trim import compute_sync_offsets
 from footage_studio.stitching.calibration import CalibrationResult
 from footage_studio.stitching.video_io import probe_video
 
@@ -106,9 +105,15 @@ def stitch_session(
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    # Inputs are assumed to be already synced by the manual sync step.
+    # Re-running audio cross-correlation here produces spurious offsets on
+    # pre-synced files. Use the shorter of the two durations instead.
+    _, _, _, left_duration = probe_video(left)
+    _, _, _, right_duration = probe_video(right)
+    duration = min(left_duration, right_duration)
+
     try:
-        left_offset, right_offset, duration, _ = compute_sync_offsets(left, right)
-        _stitch_ffmpeg(left, right, output, cal, progress_callback, left_offset, right_offset, duration)
+        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, duration)
     except Exception:
         output.unlink(missing_ok=True)
         raise
