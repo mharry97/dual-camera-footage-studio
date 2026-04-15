@@ -1,6 +1,7 @@
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -194,7 +195,7 @@ def _stitch_ffmpeg(
             "[rg][4][5]remap[w1]",
             "[w0]format=rgba[w0a]",
             "[w0a][6]alphamerge[w0_alpha]",
-            "[w1][w0_alpha]overlay=format=yuv420:shortest=1[out]",
+            "[w1][w0_alpha]overlay=format=yuv420:shortest=1,scale=3840:-2[out]",
         ])
 
         map_loop_args = [
@@ -207,13 +208,11 @@ def _stitch_ffmpeg(
 
         cmd = [ffmpeg_bin, "-y"]
         # Left video
-        cmd += ["-hwaccel", "auto"]
         cmd += ["-ss", str(left_offset_s)]
         if duration_s is not None:
             cmd += ["-t", str(duration_s)]
         cmd += ["-i", str(left)]
         # Right video
-        cmd += ["-hwaccel", "auto"]
         cmd += ["-ss", str(right_offset_s)]
         if duration_s is not None:
             cmd += ["-t", str(duration_s)]
@@ -228,7 +227,7 @@ def _stitch_ffmpeg(
         cmd += ["-loop", "1", "-i", str(weight_path)]
 
         cmd += ["-filter_complex", filter_complex, "-map", "[out]"]
-        cmd += ["-pix_fmt", "yuv420p", "-vcodec", "libx264", "-crf", "23", "-movflags", "+faststart"]
+        cmd += ["-pix_fmt", "yuv420p", "-vcodec", "libx264", "-profile:v", "high", "-level:v", "5.2", "-crf", "23", "-movflags", "+faststart"]
         cmd += [str(output)]
 
         process = subprocess.Popen(cmd, stderr=subprocess.PIPE)
@@ -241,6 +240,7 @@ def _stitch_ffmpeg(
             assert process.stderr is not None
             for chunk in iter(lambda: process.stderr.read(256), b""):  # type: ignore[union-attr]
                 stderr_chunks.append(chunk)
+                print(chunk.decode(errors="replace"), end="", file=sys.stderr, flush=True)
                 if progress_callback:
                     buf += chunk
                     for m in re.finditer(rb"frame=\s*(\d+)", buf):
