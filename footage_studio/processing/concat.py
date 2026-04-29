@@ -18,6 +18,8 @@ def concatenate(filepaths: list[Path], output_path: Path, metadata: dict | None 
                 cmd.extend(["-metadata", f"{key}={value}"])
         cmd.append(str(output_path))
 
-        subprocess.run(cmd, check=True, capture_output=True)
+        result = subprocess.run(cmd, check=False, capture_output=True)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, cmd, stderr=result.stderr)
     finally:
         list_path.unlink()

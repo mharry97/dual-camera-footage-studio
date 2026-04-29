@@ -26,10 +26,11 @@ from stitching.warper import Warper as OsWarper
 
 from footage_studio.stitching.video_io import probe_video, read_frame_at
 
-MAX_ATTEMPTS = 5
+MAX_ATTEMPTS = 15
 WINDOW_DURATION = 30.0
 MEDIUM_MEGAPIX = Images.Resolution.MEDIUM.value  # 0.6
 CONFIDENCE_THRESHOLD = 0.3
+GOOD_CONFIDENCE = 1.5   # stop searching early if any window exceeds this
 SEAM_MEGAPIX = 0.1  # resolution for seam finding (speed vs quality)
 
 
@@ -290,10 +291,32 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
         if best is None or stitcher._confidence > best[0]:
             best = (stitcher._confidence, stitcher, [frame_left, frame_right])
 
+        if best[0] >= GOOD_CONFIDENCE:
+            break
+
     if best is None:
         raise RuntimeError(
             f"Calibration failed for {left.name} / {right.name}: {last_error}"
         )
+
+    # RANSAC is stochastic — if the sweep didn't clear GOOD_CONFIDENCE, re-run
+    # feature detection on the best window's frames a few more times. Each run
+    # is a fresh RANSAC draw, so confidence can improve without re-reading video.
+    RANSAC_RETRIES = 10
+    if best[0] < GOOD_CONFIDENCE:
+        best_frames_retry = best[2]
+        for _ in range(RANSAC_RETRIES):
+            for cfg in _DETECTOR_CONFIGS:
+                try:
+                    s = _CalibrationStitcher(**cfg)
+                    s.stitch(best_frames_retry)
+                    if s._confidence > best[0]:
+                        best = (s._confidence, s, best_frames_retry)
+                    break
+                except Exception:
+                    pass
+            if best[0] >= GOOD_CONFIDENCE:
+                break
 
     _, best_stitcher, best_frames = best
 

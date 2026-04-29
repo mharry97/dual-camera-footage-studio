@@ -24,6 +24,7 @@ class StitchSession:
     name: str
     left_path: str
     right_path: str
+    mobile_friendly: bool = False
 
 
 @dataclass
@@ -119,6 +120,7 @@ def _run_job(job: Job, output_dir: Path) -> None:
                     output=output_path,
                     cal=cal,
                     progress_callback=progress_cb,
+                    mobile_friendly=session.mobile_friendly,
                 )
             except Exception as e:
                 job.progress = JobProgress(

@@ -73,8 +73,18 @@ def _apply_one(session: SyncSessionInput) -> None:
     left = Path(session.left_path)
     right = Path(session.right_path)
 
-    _stream_copy_trim_and_rename(left, session.left_offset_s, session.duration_s)
-    _stream_copy_trim_and_rename(right, session.right_offset_s, session.duration_s)
+    left_offset = session.left_offset_s
+    right_offset = session.right_offset_s
+
+    # A negative right_offset means the right video starts earlier than the
+    # left — ffmpeg can't seek to negative time, so compensate by trimming
+    # more from the left instead.
+    if right_offset < 0.0:
+        left_offset -= right_offset
+        right_offset = 0.0
+
+    _stream_copy_trim_and_rename(left, left_offset, session.duration_s)
+    _stream_copy_trim_and_rename(right, right_offset, session.duration_s)
 
 
 def _stream_copy_trim_and_rename(src: Path, offset_s: float, duration_s: float) -> None:

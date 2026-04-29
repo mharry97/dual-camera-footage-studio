@@ -102,6 +102,7 @@ def stitch_session(
     cal: CalibrationResult,
     progress_callback: Callable[[int, int], None] | None = None,
     delete_sources: bool = not KEEP_SOURCES,
+    mobile_friendly: bool = False,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -113,7 +114,7 @@ def stitch_session(
     duration = min(left_duration, right_duration)
 
     try:
-        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, duration)
+        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, duration, mobile_friendly)
     except Exception:
         output.unlink(missing_ok=True)
         raise
@@ -132,6 +133,7 @@ def _stitch_ffmpeg(
     left_offset_s: float = 0.0,
     right_offset_s: float = 0.0,
     duration_s: float | None = None,
+    mobile_friendly: bool = False,
 ) -> None:
     """
     Stitch using an ffmpeg filter graph — no Python frame loop.
@@ -190,6 +192,11 @@ def _stitch_ffmpeg(
         # 0 = left video, 1 = right video
         # 2 = xmap0, 3 = ymap0, 4 = xmap1, 5 = ymap1
         # 6 = weight0.png
+        # Mobile-friendly: scale to max 3840px wide so libx264 stays at Level 5.2
+        # rather than Level 6.0, which most mobile hardware decoders can't handle.
+        overlay_out = "overlay=format=yuv420:shortest=1,scale='min(3840,iw)':-2[out]" \
+            if mobile_friendly else "overlay=format=yuv420:shortest=1[out]"
+
         filter_complex = ";".join([
             f"[0]{_gain_filter(gain_0)}[lg]",
             f"[1]{_gain_filter(gain_1)}[rg]",
@@ -197,7 +204,7 @@ def _stitch_ffmpeg(
             "[rg][4][5]remap[w1]",
             "[w0]format=rgba[w0a]",
             "[w0a][6]alphamerge[w0_alpha]",
-            "[w1][w0_alpha]overlay=format=yuv420:shortest=1[out]",
+            f"[w1][w0_alpha]{overlay_out}",
         ])
 
         map_loop_args = [

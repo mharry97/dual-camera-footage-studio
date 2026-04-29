@@ -42,6 +42,7 @@ class ConfirmSession(BaseModel):
     name: str
     left_path: str
     right_path: str
+    mobile_friendly: bool = False
 
 
 class ConfirmRequest(BaseModel):
@@ -55,7 +56,7 @@ async def confirm(body: ConfirmRequest):
         return JSONResponse({"status": "no_directory"}, status_code=400)
 
     sessions = [
-        StitchSession(name=s.name, left_path=s.left_path, right_path=s.right_path)
+        StitchSession(name=s.name, left_path=s.left_path, right_path=s.right_path, mobile_friendly=s.mobile_friendly)
         for s in body.sessions
     ]
     job_id = start_stitch_job(sessions, output_dir)

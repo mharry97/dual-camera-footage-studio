@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -7,6 +9,8 @@ from footage_studio.core import (
     get_right_camera_dir,
 )
 from footage_studio.processing import concatenate, scan_camera_dir
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/group")
 
@@ -59,6 +63,7 @@ async def confirm():
 
             for group in groups:
                 output_path = camera_dir / group.output_name
+                logger.info("Grouping %s → %s (%d files)", camera_dir.name, group.output_name, len(group.files))
                 first_created = get_created_time(group.files[0].path)
                 concatenate(
                     filepaths=[f.path for f in group.files],
@@ -71,5 +76,7 @@ async def confirm():
                 processed_dir.mkdir(exist_ok=True)
                 for fi in group.files:
                     fi.path.rename(processed_dir / fi.path.name)
+                logger.info("Done: %s", group.output_name)
 
+    logger.info("Grouping complete")
     return {"status": "ok"}

@@ -7,6 +7,11 @@
 
 <div id="results" style="display: none">
   <div id="sessions-container"></div>
+  <label style="display:inline-flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
+    <input type="checkbox" id="mobile-friendly-check">
+    Mobile friendly (scales output to 3840px wide for device compatibility)
+  </label>
+  <br>
   <button class="btn-action" id="stitch-btn" onclick="stitchSelected()">Stitch Selected</button>
 </div>
 
@@ -89,6 +94,8 @@
     document.getElementById('progress').style.display = 'block';
     document.getElementById('stitch-btn').disabled = true;
 
+    const mobileFriendly = document.getElementById('mobile-friendly-check').checked;
+
     const res = await fetch('/api/stitch/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -96,6 +103,7 @@
         name: s.name,
         left_path: s.left_path,
         right_path: s.right_path,
+        mobile_friendly: mobileFriendly,
       })) }),
     });
     const data = await res.json();
