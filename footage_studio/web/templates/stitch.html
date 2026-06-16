@@ -7,11 +7,6 @@
 
 <div id="results" style="display: none">
   <div id="sessions-container"></div>
-  <label style="display:inline-flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
-    <input type="checkbox" id="mobile-friendly-check">
-    Mobile friendly (scales output to 3840px wide for device compatibility)
-  </label>
-  <br>
   <button class="btn-action" id="stitch-btn" onclick="stitchSelected()">Stitch Selected</button>
 </div>
 
@@ -94,8 +89,6 @@
     document.getElementById('progress').style.display = 'block';
     document.getElementById('stitch-btn').disabled = true;
 
-    const mobileFriendly = document.getElementById('mobile-friendly-check').checked;
-
     const res = await fetch('/api/stitch/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -103,7 +96,6 @@
         name: s.name,
         left_path: s.left_path,
         right_path: s.right_path,
-        mobile_friendly: mobileFriendly,
       })) }),
     });
     const data = await res.json();
@@ -135,6 +127,16 @@
       } else if (p.stage === 'stitching') {
         document.getElementById('progress-stage').textContent =
           `Stitching session ${p.session_index + 1} of ${p.total_sessions}...`;
+        if (p.total_frames > 0) {
+          const pct = Math.round((p.current_frame / p.total_frames) * 100);
+          const eta = p.eta_seconds != null ? ` — ${formatEta(p.eta_seconds)} remaining` : '';
+          document.getElementById('progress-detail').textContent =
+            `Frame ${p.current_frame} / ${p.total_frames} (${pct}%)${eta}`;
+        }
+
+      } else if (p.stage === 'transcoding') {
+        document.getElementById('progress-stage').textContent =
+          `Creating mobile copy for session ${p.session_index + 1} of ${p.total_sessions}...`;
         if (p.total_frames > 0) {
           const pct = Math.round((p.current_frame / p.total_frames) * 100);
           const eta = p.eta_seconds != null ? ` — ${formatEta(p.eta_seconds)} remaining` : '';

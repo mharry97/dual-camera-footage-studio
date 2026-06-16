@@ -9,7 +9,7 @@ from footage_studio.stitching.calibration import CalibrationResult, CONFIDENCE_T
 
 @dataclass
 class JobProgress:
-    stage: str           # "calibrating" | "stitching" | "done" | "failed"
+    stage: str           # "calibrating" | "stitching" | "transcoding" | "done" | "failed"
     session_index: int   # 0-based index of current session
     total_sessions: int
     current_frame: int = 0
@@ -24,7 +24,6 @@ class StitchSession:
     name: str
     left_path: str
     right_path: str
-    mobile_friendly: bool = False
 
 
 @dataclass
@@ -62,7 +61,7 @@ def _run_job(job: Job, output_dir: Path) -> None:
     from wakepy import keep
 
     from footage_studio.stitching.calibration import calibrate
-    from footage_studio.stitching.pipeline import stitch_session
+    from footage_studio.stitching.pipeline import make_mobile_copy, stitch_session
 
     n = len(job.sessions)
     warnings: list[str] = []
@@ -95,7 +94,7 @@ def _run_job(job: Job, output_dir: Path) -> None:
 
             name = session.name
             session_output_dir = output_dir / name
-            output_path = session_output_dir / f"{name}_stitched.mp4"
+            output_path = session_output_dir / f"{name}_full.mp4"
 
             stitch_start = time.monotonic()
 
@@ -120,8 +119,36 @@ def _run_job(job: Job, output_dir: Path) -> None:
                     output=output_path,
                     cal=cal,
                     progress_callback=progress_cb,
-                    mobile_friendly=session.mobile_friendly,
                 )
+            except Exception as e:
+                job.progress = JobProgress(
+                    stage="failed", session_index=i, total_sessions=n,
+                    error=str(e), warnings=list(warnings),
+                )
+                return
+
+            mobile_path = session_output_dir / f"{name}.mp4"
+            transcode_start = time.monotonic()
+
+            def mobile_progress_cb(frame: int, total: int, idx: int = i) -> None:
+                elapsed = time.monotonic() - transcode_start
+                fps_t = frame / elapsed if elapsed > 0 else 0
+                eta = int((total - frame) / fps_t) if fps_t > 0 and total > 0 else None
+                job.progress = JobProgress(
+                    stage="transcoding",
+                    session_index=idx,
+                    total_sessions=n,
+                    current_frame=frame,
+                    total_frames=total,
+                    eta_seconds=eta,
+                    warnings=list(warnings),
+                )
+
+            job.progress = JobProgress(
+                stage="transcoding", session_index=i, total_sessions=n, warnings=list(warnings)
+            )
+            try:
+                make_mobile_copy(output_path, mobile_path, mobile_progress_cb)
             except Exception as e:
                 job.progress = JobProgress(
                     stage="failed", session_index=i, total_sessions=n,

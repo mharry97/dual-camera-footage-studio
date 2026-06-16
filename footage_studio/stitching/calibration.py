@@ -24,7 +24,7 @@ from stitching.images import Images
 from stitching.seam_finder import SeamFinder
 from stitching.warper import Warper as OsWarper
 
-from footage_studio.stitching.video_io import probe_video, read_frame_at
+from footage_studio.stitching.video_io import actual_frame_size, probe_video, read_frame_at
 
 MAX_ATTEMPTS = 15
 WINDOW_DURATION = 30.0
@@ -78,8 +78,11 @@ class CalibrationResult:
     out_w: int
     out_h: int
     confidence: float
+    warper_scale: float = 0.0
+    canvas_origin: tuple[int, int] = (0, 0)
     seam_masks: list[np.ndarray] = field(default_factory=list)
     gains: list[np.ndarray] = field(default_factory=list)
+    frame_sizes: list[tuple[int, int]] = field(default_factory=list)  # (w, h) per camera
 
 
 def _window_starts(duration: float) -> list[float]:
@@ -96,21 +99,20 @@ def _build_remap_result(
     cameras: list,
     scale: float,
     warper_type: str,
-    frame_w: int,
-    frame_h: int,
+    frame_sizes: list[tuple[int, int]],
     confidence: float,
     medium_scale: float,
 ) -> CalibrationResult:
     """Build CalibrationResult from camera params, without seam/exposure (added later)."""
     aspect = 1.0 / medium_scale
     warper = cv.PyRotationWarper(warper_type, scale * aspect)
-    src_size = (frame_w, frame_h)
 
     maps = []
     corners_raw = []
     warped_sizes = []
 
-    for camera in cameras:
+    for camera, (fw, fh) in zip(cameras, frame_sizes):
+        src_size = (fw, fh)
         K = OsWarper.get_K(camera, aspect)
         corner, map_x, map_y = warper.buildMaps(src_size, K, camera.R)
         roi = warper.warpRoi(src_size, K, camera.R)
@@ -137,20 +139,22 @@ def _build_remap_result(
         out_w=out_w,
         out_h=out_h,
         confidence=confidence,
+        warper_scale=scale * aspect,
+        canvas_origin=(min_x, min_y),
+        frame_sizes=list(frame_sizes),
     )
 
 
 def _warp_frames(
     frames: list[np.ndarray],
     cal: CalibrationResult,
-    frame_w: int,
-    frame_h: int,
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Warp calibration frames through remap tables. Returns (warped_images, validity_masks)."""
-    solid = np.ones((frame_h, frame_w), dtype=np.uint8) * 255
     warped_imgs = []
     validity_masks = []
-    for frame, (map_x, map_y), (ww, wh) in zip(frames, cal.maps, cal.warped_sizes):
+    for i, (frame, (map_x, map_y), (ww, wh)) in enumerate(zip(frames, cal.maps, cal.warped_sizes)):
+        fw, fh = cal.frame_sizes[i] if i < len(cal.frame_sizes) else (frame.shape[1], frame.shape[0])
+        solid = np.ones((fh, fw), dtype=np.uint8) * 255
         warped = cv.remap(frame, map_x, map_y, cv.INTER_LINEAR)
         mask = cv.remap(solid, map_x, map_y, cv.INTER_NEAREST)
         warped_imgs.append(warped[:wh, :ww])
@@ -250,7 +254,18 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
     exposure-compensation steps run only on the winning window.
     Raises RuntimeError if all attempts fail.
     """
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+
     frame_w, frame_h, _, duration = probe_video(left)
+    frame_w, frame_h = actual_frame_size(left, frame_w, frame_h)
+    frame_w_r, frame_h_r, _, _ = probe_video(right)
+    frame_w_r, frame_h_r = actual_frame_size(right, frame_w_r, frame_h_r)
+
+    if (frame_w, frame_h) != (frame_w_r, frame_h_r):
+        print(f"[calibrate] resolution mismatch — left={frame_w}×{frame_h}, right={frame_w_r}×{frame_h_r}")
+
+    frame_sizes = [(frame_w, frame_h), (frame_w_r, frame_h_r)]
 
     full_megapix = (frame_w * frame_h) / 1e6
     medium_scale = min(1.0, math.sqrt(MEDIUM_MEGAPIX / full_megapix))
@@ -265,14 +280,16 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
     ]
 
     last_error: Exception | None = None
+    frame_read_failures = 0
     # (confidence, stitcher, [frame_left, frame_right])
     best: tuple[float, _CalibrationStitcher, list] | None = None
 
     for window_start in _window_starts(duration):
         sample_time = window_start + WINDOW_DURATION / 2
         frame_left = read_frame_at(left, sample_time, frame_w, frame_h)
-        frame_right = read_frame_at(right, sample_time, frame_w, frame_h)
+        frame_right = read_frame_at(right, sample_time, frame_w_r, frame_h_r)
         if frame_left is None or frame_right is None:
+            frame_read_failures += 1
             continue
 
         stitcher = None
@@ -295,6 +312,11 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
             break
 
     if best is None:
+        if frame_read_failures == MAX_ATTEMPTS:
+            raise RuntimeError(
+                f"Could not decode any frames from {left.name} / {right.name}. "
+                f"Check that the video files are valid and readable."
+            )
         raise RuntimeError(
             f"Calibration failed for {left.name} / {right.name}: {last_error}"
         )
@@ -324,13 +346,12 @@ def calibrate(left: Path, right: Path) -> CalibrationResult:
         cameras=best_stitcher._cameras,
         scale=best_stitcher.warper.scale,
         warper_type=best_stitcher.warper.warper_type,
-        frame_w=frame_w,
-        frame_h=frame_h,
+        frame_sizes=frame_sizes,
         confidence=best_stitcher._confidence,
         medium_scale=medium_scale,
     )
 
-    warped_imgs, validity_masks = _warp_frames(best_frames, cal, frame_w, frame_h)
+    warped_imgs, validity_masks = _warp_frames(best_frames, cal)
 
     try:
         cal.seam_masks = _compute_seam_masks(

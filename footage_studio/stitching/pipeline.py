@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import subprocess
@@ -13,14 +14,10 @@ import static_ffmpeg
 from footage_studio.stitching.calibration import CalibrationResult
 from footage_studio.stitching.video_io import probe_video
 
-# Set to True during development to keep source files after stitching
-KEEP_SOURCES = True
 
 
 def _precompute_blend_weights(
     cal: CalibrationResult,
-    frame_w: int,
-    frame_h: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Return float32 blend weight arrays (out_h, out_w) for cameras 0 and 1.
@@ -42,10 +39,13 @@ def _precompute_blend_weights(
         w1 = 1.0 - w0
         return w0.astype(np.float32), w1.astype(np.float32)
 
-    # Fallback: distance-transform feathering
-    solid_mask = np.ones((frame_h, frame_w), dtype=np.uint8) * 255
+    # Fallback: distance-transform feathering using per-camera frame sizes
     canvas_masks = []
-    for (map_x, map_y), (cx, cy), (ww, wh) in zip(cal.maps, cal.corners, cal.warped_sizes):
+    for i, ((map_x, map_y), (cx, cy), (ww, wh)) in enumerate(
+        zip(cal.maps, cal.corners, cal.warped_sizes)
+    ):
+        fw, fh = cal.frame_sizes[i] if i < len(cal.frame_sizes) else (map_x.shape[1], map_x.shape[0])
+        solid_mask = np.ones((fh, fw), dtype=np.uint8) * 255
         warped_mask = cv2.remap(solid_mask, map_x, map_y, cv2.INTER_NEAREST)
         canvas_mask = np.zeros((out_h, out_w), dtype=np.uint8)
         canvas_mask[cy:cy + wh, cx:cx + ww] = warped_mask[:wh, :ww]
@@ -95,14 +95,64 @@ def _save_canvas_maps(cal: CalibrationResult, tmp_dir: Path) -> list[tuple[Path,
     return paths
 
 
+def make_mobile_copy(
+    source: Path,
+    output: Path,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> None:
+    """Transcode a full-res stitched file to a mobile-compatible H.264 copy."""
+    static_ffmpeg.add_paths()
+    ffmpeg_bin = shutil.which("ffmpeg")
+    assert ffmpeg_bin, "ffmpeg binary not found after static_ffmpeg.add_paths()"
+
+    _, _, fps, duration = probe_video(source)
+    total_frames = int(duration * fps) if duration else None
+
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-i", str(source),
+        "-vf", "scale='min(3840,iw)':-2",
+        "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
+        "-pix_fmt", "yuv420p", "-level:v", "5.2", "-profile:v", "High",
+        "-acodec", "copy",
+        "-movflags", "+faststart",
+        str(output),
+    ]
+
+    process = subprocess.Popen(cmd, stderr=subprocess.PIPE)
+    stderr_chunks: list[bytes] = []
+
+    def _drain() -> None:
+        buf = b""
+        assert process.stderr is not None
+        for chunk in iter(lambda: process.stderr.read(256), b""):
+            stderr_chunks.append(chunk)
+            if progress_callback:
+                buf += chunk
+                for m in re.finditer(rb"frame=\s*(\d+)", buf):
+                    try:
+                        progress_callback(int(m.group(1)), total_frames or 0)
+                    except ValueError:
+                        pass
+                last = buf.rfind(b"frame=")
+                buf = buf[last:] if last >= 0 else buf[-64:]
+
+    t = threading.Thread(target=_drain, daemon=True)
+    t.start()
+    t.join()
+    returncode = process.wait()
+    if returncode != 0:
+        stderr_output = b"".join(stderr_chunks).decode(errors="replace")
+        raise RuntimeError(f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}")
+
+
 def stitch_session(
     left: Path,
     right: Path,
     output: Path,
     cal: CalibrationResult,
     progress_callback: Callable[[int, int], None] | None = None,
-    delete_sources: bool = not KEEP_SOURCES,
-    mobile_friendly: bool = False,
+    delete_sources: bool = True,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -114,10 +164,17 @@ def stitch_session(
     duration = min(left_duration, right_duration)
 
     try:
-        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, duration, mobile_friendly)
+        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, duration)
     except Exception:
         output.unlink(missing_ok=True)
         raise
+
+    calib_path = output.parent / "calibration.json"
+    calib_path.write_text(json.dumps({
+        "warper_scale": cal.warper_scale,
+        "canvas_origin": list(cal.canvas_origin),
+        "canvas_size": [cal.out_w, cal.out_h],
+    }, indent=2))
 
     if delete_sources:
         left.unlink(missing_ok=True)
@@ -133,7 +190,6 @@ def _stitch_ffmpeg(
     left_offset_s: float = 0.0,
     right_offset_s: float = 0.0,
     duration_s: float | None = None,
-    mobile_friendly: bool = False,
 ) -> None:
     """
     Stitch using an ffmpeg filter graph — no Python frame loop.
@@ -169,7 +225,7 @@ def _stitch_ffmpeg(
 
         map_paths = _save_canvas_maps(cal, tmp_dir)
 
-        w0, _ = _precompute_blend_weights(cal, frame_w, frame_h)
+        w0, _ = _precompute_blend_weights(cal)
         weight_path = tmp_dir / "weight0.png"
         cv2.imwrite(str(weight_path), (w0 * 255).astype(np.uint8))
 
@@ -192,10 +248,7 @@ def _stitch_ffmpeg(
         # 0 = left video, 1 = right video
         # 2 = xmap0, 3 = ymap0, 4 = xmap1, 5 = ymap1
         # 6 = weight0.png
-        # Mobile-friendly: scale to max 3840px wide so libx264 stays at Level 5.2
-        # rather than Level 6.0, which most mobile hardware decoders can't handle.
-        overlay_out = "overlay=format=yuv420:shortest=1,scale='min(3840,iw)':-2[out]" \
-            if mobile_friendly else "overlay=format=yuv420:shortest=1[out]"
+        overlay_out = "overlay=format=yuv420:shortest=1[out]"
 
         filter_complex = ";".join([
             f"[0]{_gain_filter(gain_0)}[lg]",
