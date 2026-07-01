@@ -8,19 +8,18 @@ SAMPLE_RATE = 8000
 CONFIDENCE_THRESHOLD = 0.1
 
 
-def _extract_audio(filepath: Path) -> np.ndarray | None:
+def _extract_audio(filepath: Path, max_seconds: float | None = None) -> np.ndarray | None:
     """Extract mono audio from a video file as a normalised float32 array at SAMPLE_RATE."""
-    result = subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-i", str(filepath),
-            "-ac", "1",
-            "-ar", str(SAMPLE_RATE),
-            "-f", "s16le",
-            "-",
-        ],
-        capture_output=True,
-    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(filepath),
+        "-ac", "1",
+        "-ar", str(SAMPLE_RATE),
+    ]
+    if max_seconds is not None:
+        cmd += ["-t", str(max_seconds)]
+    cmd += ["-f", "s16le", "-"]
+    result = subprocess.run(cmd, capture_output=True)
     if result.returncode != 0 or len(result.stdout) == 0:
         return None
 
@@ -51,8 +50,12 @@ def audio_offset(
     of zero offset — use this to bound the search when you have a rough timestamp
     estimate to avoid false peaks on long recordings.
     """
-    left_audio = _extract_audio(left)
-    right_audio = _extract_audio(right)
+    # Only extract as much audio as needed to cover the search window.
+    # 3× the window gives enough context on either side; unconstrained extracts
+    # the whole file which is very slow on long recordings.
+    extract_seconds = search_window_seconds * 3 if search_window_seconds is not None else None
+    left_audio = _extract_audio(left, extract_seconds)
+    right_audio = _extract_audio(right, extract_seconds)
 
     if left_audio is None or right_audio is None:
         return None

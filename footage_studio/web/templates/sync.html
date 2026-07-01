@@ -89,6 +89,8 @@
               <label>Right offset</label>
               <input type="range" id="offset-slider-${index}" min="0" max="100" step="0.1" value="50"
                 onchange="onOffsetChange(${index})">
+              <input type="number" id="offset-input-${index}" step="0.1" style="width:5.5em"
+                onchange="onOffsetInputChange(${index})">
               <span class="sync-slider-val" id="offset-val-${index}">—</span>
             </div>
           </div>
@@ -151,8 +153,6 @@
   function showFramePanel(index, session, syncData) {
     const duration = syncData.duration_s;
     const rightOffset = syncData.right_offset_s;
-    const halfRange = 10.0;
-
     // Configure time slider: 0→duration, default middle
     const timeSlider = document.getElementById(`time-slider-${index}`);
     timeSlider.min = 0;
@@ -161,15 +161,14 @@
     timeSlider.value = Math.floor(duration / 2);
     document.getElementById(`time-val-${index}`).textContent = formatTime(timeSlider.value);
 
-    // Configure offset slider: rightOffset ± 10s
+    // Configure offset slider: -60s to +60s
     const offsetSlider = document.getElementById(`offset-slider-${index}`);
-    const offsetMin = Math.max(0, rightOffset - halfRange);
-    const offsetMax = rightOffset + halfRange;
-    offsetSlider.min = offsetMin.toFixed(1);
-    offsetSlider.max = offsetMax.toFixed(1);
+    offsetSlider.min = '-60.0';
+    offsetSlider.max = '60.0';
     offsetSlider.step = 0.1;
     offsetSlider.value = rightOffset.toFixed(1);
-    document.getElementById(`offset-val-${index}`).textContent = `+${rightOffset.toFixed(2)}s`;
+    document.getElementById(`offset-val-${index}`).textContent = (rightOffset >= 0 ? '+' : '') + rightOffset.toFixed(2) + 's';
+    document.getElementById(`offset-input-${index}`).value = rightOffset.toFixed(1);
 
     document.getElementById(`frame-panel-${index}`).style.display = 'block';
     loadFramePair(index);
@@ -183,9 +182,20 @@
 
   function onOffsetChange(index) {
     const offset = parseFloat(document.getElementById(`offset-slider-${index}`).value);
-    document.getElementById(`offset-val-${index}`).textContent = `+${offset.toFixed(2)}s`;
-    // Update the stored offset so Apply uses the manual value
+    document.getElementById(`offset-val-${index}`).textContent = (offset >= 0 ? '+' : '') + offset.toFixed(2) + 's';
+    document.getElementById(`offset-input-${index}`).value = offset.toFixed(1);
     _syncData[index].right_offset_s = offset;
+    _syncData[index].method = 'manual';
+    loadFramePair(index);
+  }
+
+  function onOffsetInputChange(index) {
+    const raw = parseFloat(document.getElementById(`offset-input-${index}`).value);
+    if (isNaN(raw)) return;
+    const clamped = Math.max(-60, Math.min(60, raw));
+    document.getElementById(`offset-slider-${index}`).value = clamped.toFixed(1);
+    document.getElementById(`offset-val-${index}`).textContent = (clamped >= 0 ? '+' : '') + clamped.toFixed(2) + 's';
+    _syncData[index].right_offset_s = clamped;
     _syncData[index].method = 'manual';
     loadFramePair(index);
   }
@@ -196,9 +206,9 @@
     const sharedTime = parseFloat(document.getElementById(`time-slider-${index}`).value);
 
     // Left frame: shared_time after left's trim offset
-    const leftTime = sync.left_offset_s + sharedTime;
-    // Right frame: shared_time after right's trim offset (user-adjustable)
-    const rightTime = sync.right_offset_s + sharedTime;
+    const leftTime = Math.max(0, sync.left_offset_s + sharedTime);
+    // Right frame: shared_time after right's trim offset (user-adjustable; may be negative)
+    const rightTime = Math.max(0, sync.right_offset_s + sharedTime);
 
     const leftImg = document.getElementById(`frame-left-${index}`);
     const rightImg = document.getElementById(`frame-right-${index}`);

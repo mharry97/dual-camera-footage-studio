@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import subprocess
@@ -10,18 +11,14 @@ import cv2
 import numpy as np
 import static_ffmpeg
 
-from footage_studio.processing.trim import compute_sync_offsets
 from footage_studio.stitching.calibration import CalibrationResult
 from footage_studio.stitching.video_io import probe_video
 
-# Set to True during development to keep source files after stitching
-KEEP_SOURCES = True
+TAIL_THRESHOLD_S = 1.0
 
 
 def _precompute_blend_weights(
     cal: CalibrationResult,
-    frame_w: int,
-    frame_h: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Return float32 blend weight arrays (out_h, out_w) for cameras 0 and 1.
@@ -43,10 +40,13 @@ def _precompute_blend_weights(
         w1 = 1.0 - w0
         return w0.astype(np.float32), w1.astype(np.float32)
 
-    # Fallback: distance-transform feathering
-    solid_mask = np.ones((frame_h, frame_w), dtype=np.uint8) * 255
+    # Fallback: distance-transform feathering using per-camera frame sizes
     canvas_masks = []
-    for (map_x, map_y), (cx, cy), (ww, wh) in zip(cal.maps, cal.corners, cal.warped_sizes):
+    for i, ((map_x, map_y), (cx, cy), (ww, wh)) in enumerate(
+        zip(cal.maps, cal.corners, cal.warped_sizes)
+    ):
+        fw, fh = cal.frame_sizes[i] if i < len(cal.frame_sizes) else (map_x.shape[1], map_x.shape[0])
+        solid_mask = np.ones((fh, fw), dtype=np.uint8) * 255
         warped_mask = cv2.remap(solid_mask, map_x, map_y, cv2.INTER_NEAREST)
         canvas_mask = np.zeros((out_h, out_w), dtype=np.uint8)
         canvas_mask[cy:cy + wh, cx:cx + ww] = warped_mask[:wh, :ww]
@@ -96,22 +96,157 @@ def _save_canvas_maps(cal: CalibrationResult, tmp_dir: Path) -> list[tuple[Path,
     return paths
 
 
+def make_mobile_copy(
+    source: Path,
+    output: Path,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> None:
+    """Transcode a full-res stitched file to a mobile-compatible H.264 copy."""
+    static_ffmpeg.add_paths()
+    ffmpeg_bin = shutil.which("ffmpeg")
+    assert ffmpeg_bin, "ffmpeg binary not found after static_ffmpeg.add_paths()"
+
+    _, _, fps, duration = probe_video(source)
+    total_frames = int(duration * fps) if duration else None
+
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-i", str(source),
+        "-vf", "scale='min(3840,iw)':-2",
+        "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
+        "-pix_fmt", "yuv420p", "-level:v", "5.2", "-profile:v", "High",
+        "-acodec", "copy",
+        "-movflags", "+faststart",
+        str(output),
+    ]
+
+    process = subprocess.Popen(cmd, stderr=subprocess.PIPE)
+    stderr_chunks: list[bytes] = []
+
+    def _drain() -> None:
+        buf = b""
+        assert process.stderr is not None
+        for chunk in iter(lambda: process.stderr.read(256), b""):
+            stderr_chunks.append(chunk)
+            if progress_callback:
+                buf += chunk
+                for m in re.finditer(rb"frame=\s*(\d+)", buf):
+                    try:
+                        progress_callback(int(m.group(1)), total_frames or 0)
+                    except ValueError:
+                        pass
+                last = buf.rfind(b"frame=")
+                buf = buf[last:] if last >= 0 else buf[-64:]
+
+    t = threading.Thread(target=_drain, daemon=True)
+    t.start()
+    t.join()
+    returncode = process.wait()
+    if returncode != 0:
+        stderr_output = b"".join(stderr_chunks).decode(errors="replace")
+        raise RuntimeError(f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}")
+
+
+def _append_tail(
+    stitched: Path,
+    tail_source: Path,
+    tail_start_s: float,
+    out_w: int,
+    out_h: int,
+    on_left: bool,
+    src_w: int,
+    src_h: int,
+) -> None:
+    """Encode the single-camera tail and concat it onto the end of the stitched file."""
+    static_ffmpeg.add_paths()
+    ffmpeg_bin = shutil.which("ffmpeg")
+    assert ffmpeg_bin
+
+    scaled_w = int(round(src_w * out_h / src_h))
+    scaled_w += scaled_w % 2
+    x_offset = 0 if on_left else out_w - scaled_w
+
+    merging = stitched.with_name(stitched.stem + ".merging.mp4")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp_dir = Path(tmp_str)
+            tail_path = tmp_dir / "tail.mp4"
+
+            result = subprocess.run(
+                [
+                    ffmpeg_bin, "-y",
+                    "-ss", str(tail_start_s), "-i", str(tail_source),
+                    "-vf", f"scale={scaled_w}:{out_h},pad={out_w}:{out_h}:{x_offset}:0:black",
+                    "-vcodec", "libx264", "-crf", "23", "-pix_fmt", "yuv420p", "-an",
+                    str(tail_path),
+                ],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Tail encode failed: {result.stderr.decode(errors='replace')[-2000:]}"
+                )
+
+            concat_list = tmp_dir / "concat.txt"
+            concat_list.write_text(
+                f"file '{stitched.resolve()}'\nfile '{tail_path.resolve()}'\n"
+            )
+            result = subprocess.run(
+                [
+                    ffmpeg_bin, "-y",
+                    "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                    "-c", "copy", "-movflags", "+faststart",
+                    str(merging),
+                ],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Tail concat failed: {result.stderr.decode(errors='replace')[-2000:]}"
+                )
+
+        merging.replace(stitched)
+    except Exception:
+        merging.unlink(missing_ok=True)
+        raise
+
+
 def stitch_session(
     left: Path,
     right: Path,
     output: Path,
     cal: CalibrationResult,
     progress_callback: Callable[[int, int], None] | None = None,
-    delete_sources: bool = not KEEP_SOURCES,
+    delete_sources: bool = True,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    _, _, _, left_duration = probe_video(left)
+    _, _, _, right_duration = probe_video(right)
+    shared_duration = min(left_duration, right_duration)
+
     try:
-        left_offset, right_offset, duration, _ = compute_sync_offsets(left, right)
-        _stitch_ffmpeg(left, right, output, cal, progress_callback, left_offset, right_offset, duration)
+        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, shared_duration)
     except Exception:
         output.unlink(missing_ok=True)
         raise
+
+    tail_duration = abs(left_duration - right_duration)
+    if tail_duration > TAIL_THRESHOLD_S:
+        tail_is_left = left_duration > right_duration
+        tail_source = left if tail_is_left else right
+        input_idx = 0 if tail_is_left else 1
+        other_idx = 1 - input_idx
+        src_w, src_h = cal.frame_sizes[input_idx]
+        on_left = cal.corners[input_idx][0] <= cal.corners[other_idx][0]
+        _append_tail(output, tail_source, shared_duration, cal.out_w, cal.out_h, on_left, src_w, src_h)
+
+    calib_path = output.parent / "calibration.json"
+    calib_path.write_text(json.dumps({
+        "warper_scale": cal.warper_scale,
+        "canvas_origin": list(cal.canvas_origin),
+        "canvas_size": [cal.out_w, cal.out_h],
+    }, indent=2))
 
     if delete_sources:
         left.unlink(missing_ok=True)
@@ -162,7 +297,7 @@ def _stitch_ffmpeg(
 
         map_paths = _save_canvas_maps(cal, tmp_dir)
 
-        w0, _ = _precompute_blend_weights(cal, frame_w, frame_h)
+        w0, _ = _precompute_blend_weights(cal)
         weight_path = tmp_dir / "weight0.png"
         cv2.imwrite(str(weight_path), (w0 * 255).astype(np.uint8))
 
@@ -185,6 +320,8 @@ def _stitch_ffmpeg(
         # 0 = left video, 1 = right video
         # 2 = xmap0, 3 = ymap0, 4 = xmap1, 5 = ymap1
         # 6 = weight0.png
+        overlay_out = "overlay=format=yuv420:shortest=1[out]"
+
         filter_complex = ";".join([
             f"[0]{_gain_filter(gain_0)}[lg]",
             f"[1]{_gain_filter(gain_1)}[rg]",
@@ -192,7 +329,7 @@ def _stitch_ffmpeg(
             "[rg][4][5]remap[w1]",
             "[w0]format=rgba[w0a]",
             "[w0a][6]alphamerge[w0_alpha]",
-            "[w1][w0_alpha]overlay=format=yuv420:shortest=1[out]",
+            f"[w1][w0_alpha]{overlay_out}",
         ])
 
         map_loop_args = [

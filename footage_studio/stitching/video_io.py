@@ -34,12 +34,39 @@ def read_frame_at(path: Path, time_s: float, width: int, height: int) -> np.ndar
             .output("pipe:", vframes=1, format="rawvideo", pix_fmt="bgr24")
             .run(capture_stdout=True, capture_stderr=True)
         )
-    except ffmpeg.Error:
+    except ffmpeg.Error as e:
+        print(f"[read_frame_at] ffmpeg error at t={time_s:.1f}s for {path.name}:\n"
+              f"{e.stderr.decode(errors='replace')[-500:]}")
         return None
     expected = width * height * 3
     if len(out) < expected:
+        print(f"[read_frame_at] short output at t={time_s:.1f}s for {path.name}: "
+              f"got {len(out)} bytes, expected {expected}")
         return None
     return np.frombuffer(out, np.uint8)[:expected].reshape(height, width, 3).copy()
+
+
+def actual_frame_size(path: Path, probed_width: int, probed_height: int) -> tuple[int, int]:
+    """
+    Decode one frame to get true decoded dimensions.
+
+    Some DJI H.265 files report 4:3 display dimensions in container metadata
+    while the actual H.265 bitstream encodes 16:9 frames (conformance crop).
+    ffprobe returns the container dimensions; this returns what ffmpeg decodes.
+    """
+    try:
+        out, _ = (
+            ffmpeg
+            .input(str(path), ss=1.0)
+            .output("pipe:", vframes=1, format="rawvideo", pix_fmt="bgr24")
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        n = len(out)
+        if n > 0 and probed_width > 0 and n % (probed_width * 3) == 0:
+            return probed_width, n // (probed_width * 3)
+    except ffmpeg.Error:
+        pass
+    return probed_width, probed_height
 
 
 @contextlib.contextmanager
