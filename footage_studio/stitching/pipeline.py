@@ -14,6 +14,7 @@ import static_ffmpeg
 from footage_studio.stitching.calibration import CalibrationResult
 from footage_studio.stitching.video_io import probe_video
 
+TAIL_THRESHOLD_S = 1.0
 
 
 def _precompute_blend_weights(
@@ -146,6 +147,70 @@ def make_mobile_copy(
         raise RuntimeError(f"ffmpeg exited with code {returncode}:\n{stderr_output[-2000:]}")
 
 
+def _append_tail(
+    stitched: Path,
+    tail_source: Path,
+    tail_start_s: float,
+    out_w: int,
+    out_h: int,
+    on_left: bool,
+    src_w: int,
+    src_h: int,
+) -> None:
+    """Encode the single-camera tail and concat it onto the end of the stitched file."""
+    static_ffmpeg.add_paths()
+    ffmpeg_bin = shutil.which("ffmpeg")
+    assert ffmpeg_bin
+
+    scaled_w = int(round(src_w * out_h / src_h))
+    scaled_w += scaled_w % 2
+    x_offset = 0 if on_left else out_w - scaled_w
+
+    merging = stitched.with_name(stitched.stem + ".merging.mp4")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp_dir = Path(tmp_str)
+            tail_path = tmp_dir / "tail.mp4"
+
+            result = subprocess.run(
+                [
+                    ffmpeg_bin, "-y",
+                    "-ss", str(tail_start_s), "-i", str(tail_source),
+                    "-vf", f"scale={scaled_w}:{out_h},pad={out_w}:{out_h}:{x_offset}:0:black",
+                    "-vcodec", "libx264", "-crf", "23", "-pix_fmt", "yuv420p", "-an",
+                    str(tail_path),
+                ],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Tail encode failed: {result.stderr.decode(errors='replace')[-2000:]}"
+                )
+
+            concat_list = tmp_dir / "concat.txt"
+            concat_list.write_text(
+                f"file '{stitched.resolve()}'\nfile '{tail_path.resolve()}'\n"
+            )
+            result = subprocess.run(
+                [
+                    ffmpeg_bin, "-y",
+                    "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                    "-c", "copy", "-movflags", "+faststart",
+                    str(merging),
+                ],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Tail concat failed: {result.stderr.decode(errors='replace')[-2000:]}"
+                )
+
+        merging.replace(stitched)
+    except Exception:
+        merging.unlink(missing_ok=True)
+        raise
+
+
 def stitch_session(
     left: Path,
     right: Path,
@@ -156,18 +221,25 @@ def stitch_session(
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    # Inputs are assumed to be already synced by the manual sync step.
-    # Re-running audio cross-correlation here produces spurious offsets on
-    # pre-synced files. Use the shorter of the two durations instead.
     _, _, _, left_duration = probe_video(left)
     _, _, _, right_duration = probe_video(right)
-    duration = min(left_duration, right_duration)
+    shared_duration = min(left_duration, right_duration)
 
     try:
-        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, duration)
+        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, shared_duration)
     except Exception:
         output.unlink(missing_ok=True)
         raise
+
+    tail_duration = abs(left_duration - right_duration)
+    if tail_duration > TAIL_THRESHOLD_S:
+        tail_is_left = left_duration > right_duration
+        tail_source = left if tail_is_left else right
+        input_idx = 0 if tail_is_left else 1
+        other_idx = 1 - input_idx
+        src_w, src_h = cal.frame_sizes[input_idx]
+        on_left = cal.corners[input_idx][0] <= cal.corners[other_idx][0]
+        _append_tail(output, tail_source, shared_duration, cal.out_w, cal.out_h, on_left, src_w, src_h)
 
     calib_path = output.parent / "calibration.json"
     calib_path.write_text(json.dumps({
