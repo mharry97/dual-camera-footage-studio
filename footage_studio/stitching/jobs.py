@@ -156,6 +156,19 @@ def _run_job(job: Job, output_dir: Path) -> None:
                 )
                 return
 
+            # Outputs with a head edit list play differently per decoder
+            # (Firefox shows the pre-trim frames, shifting the timeline) —
+            # nothing in this pipeline should produce one.
+            from footage_studio.processing.trim import head_edit_list_s
+            for out in (output_path, mobile_path):
+                elst_s = head_edit_list_s(out)
+                if elst_s > 0.2:
+                    warnings.append(
+                        f"{out.name} carries a {elst_s:.2f}s head edit list — it will "
+                        "play out of sync in some browsers. Avoid trimming outputs with "
+                        "`ffmpeg -ss ... -c copy`; use footage_studio.processing.trim instead."
+                    )
+
         job.progress = JobProgress(
             stage="done", session_index=n, total_sessions=n, warnings=list(warnings)
         )
