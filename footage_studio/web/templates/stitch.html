@@ -134,16 +134,6 @@
             `Frame ${p.current_frame} / ${p.total_frames} (${pct}%)${eta}`;
         }
 
-      } else if (p.stage === 'transcoding') {
-        document.getElementById('progress-stage').textContent =
-          `Creating mobile copy for session ${p.session_index + 1} of ${p.total_sessions}...`;
-        if (p.total_frames > 0) {
-          const pct = Math.round((p.current_frame / p.total_frames) * 100);
-          const eta = p.eta_seconds != null ? ` — ${formatEta(p.eta_seconds)} remaining` : '';
-          document.getElementById('progress-detail').textContent =
-            `Frame ${p.current_frame} / ${p.total_frames} (${pct}%)${eta}`;
-        }
-
       } else if (p.stage === 'done') {
         clearInterval(interval);
         document.getElementById('progress-stage').textContent =

@@ -16,6 +16,18 @@ from footage_studio.stitching.video_io import probe_video
 
 TAIL_THRESHOLD_S = 1.0
 
+# Stitched output is encoded directly at mobile-compatible resolution — the
+# full-res canvas is never written to disk (raw synced sources are the archive).
+MOBILE_MAX_W = 3840
+
+
+def _output_dims(cal: "CalibrationResult") -> tuple[int, int]:
+    """Final output dimensions: canvas downscaled to MOBILE_MAX_W, height even."""
+    if cal.out_w <= MOBILE_MAX_W:
+        return cal.out_w, cal.out_h
+    out_h = round(cal.out_h * MOBILE_MAX_W / cal.out_w / 2) * 2
+    return MOBILE_MAX_W, out_h
+
 
 def _precompute_blend_weights(
     cal: CalibrationResult,
@@ -177,7 +189,8 @@ def _append_tail(
                     ffmpeg_bin, "-y",
                     "-ss", str(tail_start_s), "-i", str(tail_source),
                     "-vf", f"scale={scaled_w}:{out_h},pad={out_w}:{out_h}:{x_offset}:0:black",
-                    "-vcodec", "libx264", "-crf", "23", "-pix_fmt", "yuv420p", "-an",
+                    "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
+                    "-level:v", "5.2", "-profile:v", "High", "-pix_fmt", "yuv420p", "-an",
                     str(tail_path),
                 ],
                 capture_output=True,
@@ -217,7 +230,7 @@ def stitch_session(
     output: Path,
     cal: CalibrationResult,
     progress_callback: Callable[[int, int], None] | None = None,
-    delete_sources: bool = True,
+    delete_sources: bool = False,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -231,6 +244,8 @@ def stitch_session(
         output.unlink(missing_ok=True)
         raise
 
+    out_w, out_h = _output_dims(cal)
+
     tail_duration = abs(left_duration - right_duration)
     if tail_duration > TAIL_THRESHOLD_S:
         tail_is_left = left_duration > right_duration
@@ -239,13 +254,18 @@ def stitch_session(
         other_idx = 1 - input_idx
         src_w, src_h = cal.frame_sizes[input_idx]
         on_left = cal.corners[input_idx][0] <= cal.corners[other_idx][0]
-        _append_tail(output, tail_source, shared_duration, cal.out_w, cal.out_h, on_left, src_w, src_h)
+        _append_tail(output, tail_source, shared_duration, out_w, out_h, on_left, src_w, src_h)
 
+    # Calibration is expressed in canvas pixels; the maths is linear, so scaling
+    # every field by the output/canvas ratio keeps downstream spherical
+    # projection consistent with the downscaled video.
+    sx = out_w / cal.out_w
+    sy = out_h / cal.out_h
     calib_path = output.parent / "calibration.json"
     calib_path.write_text(json.dumps({
-        "warper_scale": cal.warper_scale,
-        "canvas_origin": list(cal.canvas_origin),
-        "canvas_size": [cal.out_w, cal.out_h],
+        "warper_scale": cal.warper_scale * sx,
+        "canvas_origin": [round(cal.canvas_origin[0] * sx), round(cal.canvas_origin[1] * sy)],
+        "canvas_size": [out_w, out_h],
     }, indent=2))
 
     if delete_sources:
@@ -268,10 +288,14 @@ def _stitch_ffmpeg(
 
     Pipeline:
       left.mp4 ──[colorchannelmixer]──[remap(xmap0,ymap0)]──┐
-                                                              ├──[alphamerge+overlay]──► output.mp4
+                                                              ├──[alphamerge+overlay]──[scale ≤3840w]──► output.mp4
       right.mp4 ──[colorchannelmixer]──[remap(xmap1,ymap1)]──┘
                                         ↑
                               weight0.png (cam0 blend weight as alpha)
+
+    The blend runs at full canvas resolution; only the encoded output is
+    downscaled to mobile width (single-generation encode — no separate
+    full-res master is written).
 
     Map files are canvas-sized gray16le uint16 raw binary — ffmpeg remap
     filter expects integer pixel coordinates in this format.
@@ -320,7 +344,12 @@ def _stitch_ffmpeg(
         # 0 = left video, 1 = right video
         # 2 = xmap0, 3 = ymap0, 4 = xmap1, 5 = ymap1
         # 6 = weight0.png
-        overlay_out = "overlay=format=yuv420:shortest=1[out]"
+        target_w, target_h = _output_dims(cal)
+        if (target_w, target_h) != (out_w, out_h):
+            overlay_out = (f"overlay=format=yuv420:shortest=1[ov];"
+                           f"[ov]scale={target_w}:{target_h}[out]")
+        else:
+            overlay_out = "overlay=format=yuv420:shortest=1[out]"
 
         filter_complex = ";".join([
             f"[0]{_gain_filter(gain_0)}[lg]",
@@ -363,7 +392,8 @@ def _stitch_ffmpeg(
         cmd += ["-loop", "1", "-i", str(weight_path)]
 
         cmd += ["-filter_complex", filter_complex, "-map", "[out]"]
-        cmd += ["-pix_fmt", "yuv420p", "-vcodec", "libx264", "-crf", "23", "-movflags", "+faststart"]
+        cmd += ["-pix_fmt", "yuv420p", "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
+                "-level:v", "5.2", "-profile:v", "High", "-movflags", "+faststart"]
         cmd += [str(output)]
 
         process = subprocess.Popen(cmd, stderr=subprocess.PIPE)
