@@ -313,6 +313,21 @@ ol {
   font-weight: 700;
 }
 
+.sync-adjust-btn {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text);
+  background: none;
+  border: 1px solid var(--bg-subtle);
+  border-radius: 6px;
+}
+
+.sync-adjust-btn:hover {
+  background: var(--bg-subtle);
+}
+
 .sync-files {
   display: flex;
   gap: 10px;
