@@ -60,6 +60,8 @@
       <div class="sync-session" id="session-${index}">
         <div class="sync-session-header">
           <span class="sync-session-name">${session.name}</span>
+          <button class="sync-adjust-btn" id="adjust-btn-${index}" style="display:none"
+            onclick="toggleFramePanel(${index})">Adjust manually</button>
         </div>
         <div class="sync-files">
           <span class="sync-file-label">L</span><span class="sync-file-name">${session.left}</span>
@@ -136,6 +138,10 @@
       confidence: data.confidence,
     };
 
+    // Manual adjustment is always available — the panel opens on demand for
+    // accepted sessions, and automatically when the audio result can't be trusted.
+    document.getElementById(`adjust-btn-${index}`).style.display = 'inline-block';
+
     if (data.accepted) {
       const conf = data.confidence != null ? ` (confidence: ${data.confidence.toFixed(3)})` : '';
       setStatus(index, 'ok', `Audio sync — offset +${data.right_offset_s.toFixed(3)}s${conf}`);
@@ -144,13 +150,24 @@
         ? `confidence ${data.confidence.toFixed(3)} below threshold — `
         : '';
       setStatus(index, 'warning', `${confStr}manual alignment required`);
-      showFramePanel(index, session, data);
+      showFramePanel(index);
     }
   }
 
   // ── Frame panel ───────────────────────────────────────────────────────────
 
-  function showFramePanel(index, session, syncData) {
+  function toggleFramePanel(index) {
+    const panel = document.getElementById(`frame-panel-${index}`);
+    if (panel.style.display === 'none') {
+      showFramePanel(index);
+    } else {
+      panel.style.display = 'none';
+      document.getElementById(`adjust-btn-${index}`).textContent = 'Adjust manually';
+    }
+  }
+
+  function showFramePanel(index) {
+    const syncData = _syncData[index];
     const duration = syncData.duration_s;
     const rightOffset = syncData.right_offset_s;
     // Configure time slider: 0→duration, default middle
@@ -170,7 +187,8 @@
     document.getElementById(`offset-val-${index}`).textContent = (rightOffset >= 0 ? '+' : '') + rightOffset.toFixed(2) + 's';
     document.getElementById(`offset-input-${index}`).value = rightOffset.toFixed(1);
 
-    document.getElementById(`frame-panel-${index}`).style.display = 'block';
+    document.getElementById(`frame-panel-${index}`).style.display = 'flex';
+    document.getElementById(`adjust-btn-${index}`).textContent = 'Hide adjustment';
     loadFramePair(index);
   }
 
@@ -184,9 +202,7 @@
     const offset = parseFloat(document.getElementById(`offset-slider-${index}`).value);
     document.getElementById(`offset-val-${index}`).textContent = (offset >= 0 ? '+' : '') + offset.toFixed(2) + 's';
     document.getElementById(`offset-input-${index}`).value = offset.toFixed(1);
-    _syncData[index].right_offset_s = offset;
-    _syncData[index].method = 'manual';
-    loadFramePair(index);
+    setManualOffset(index, offset);
   }
 
   function onOffsetInputChange(index) {
@@ -195,8 +211,14 @@
     const clamped = Math.max(-60, Math.min(60, raw));
     document.getElementById(`offset-slider-${index}`).value = clamped.toFixed(1);
     document.getElementById(`offset-val-${index}`).textContent = (clamped >= 0 ? '+' : '') + clamped.toFixed(2) + 's';
-    _syncData[index].right_offset_s = clamped;
+    setManualOffset(index, clamped);
+  }
+
+  /** Record a user-chosen offset, overriding whatever the audio/timestamp check produced. */
+  function setManualOffset(index, offset) {
+    _syncData[index].right_offset_s = offset;
     _syncData[index].method = 'manual';
+    setStatus(index, 'ok', `Manual sync — offset ${offset >= 0 ? '+' : ''}${offset.toFixed(2)}s`);
     loadFramePair(index);
   }
 
