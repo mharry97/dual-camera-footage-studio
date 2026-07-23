@@ -17,7 +17,9 @@ from footage_studio.stitching.video_io import probe_video
 TAIL_THRESHOLD_S = 1.0
 
 # Stitched output is encoded directly at mobile-compatible resolution — the
-# full-res canvas is never written to disk (raw synced sources are the archive).
+# full-res canvas is never written to disk. The original raw clips already
+# archived under _processed/ are the archive of record, so synced sources are
+# deleted after a successful stitch.
 MOBILE_MAX_W = 3840
 
 
@@ -230,7 +232,7 @@ def stitch_session(
     output: Path,
     cal: CalibrationResult,
     progress_callback: Callable[[int, int], None] | None = None,
-    delete_sources: bool = False,
+    delete_sources: bool = True,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
