@@ -25,6 +25,12 @@ def probe_video(path: Path) -> tuple[int, int, float, float]:
     return width, height, fps, duration
 
 
+def has_audio_stream(path: Path) -> bool:
+    """Return True if the file has at least one audio stream."""
+    probe = ffmpeg.probe(str(path))
+    return any(s["codec_type"] == "audio" for s in probe["streams"])
+
+
 def read_frame_at(path: Path, time_s: float, width: int, height: int) -> np.ndarray | None:
     """Decode a single frame at the given timestamp. Returns BGR uint8 array or None."""
     try:

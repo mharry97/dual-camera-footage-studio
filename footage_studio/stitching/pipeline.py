@@ -12,7 +12,7 @@ import numpy as np
 import static_ffmpeg
 
 from footage_studio.stitching.calibration import CalibrationResult
-from footage_studio.stitching.video_io import probe_video
+from footage_studio.stitching.video_io import has_audio_stream, probe_video
 
 TAIL_THRESHOLD_S = 1.0
 
@@ -170,8 +170,14 @@ def _append_tail(
     on_left: bool,
     src_w: int,
     src_h: int,
+    include_audio: bool = False,
 ) -> None:
-    """Encode the single-camera tail and concat it onto the end of the stitched file."""
+    """Encode the single-camera tail and concat it onto the end of the stitched file.
+
+    tail_source is always the camera whose audio was used for the main segment
+    (it's the longer of the two by construction), so continuing to pull audio
+    from it here just extends that same continuous track — no splice needed.
+    """
     static_ffmpeg.add_paths()
     ffmpeg_bin = shutil.which("ffmpeg")
     assert ffmpeg_bin
@@ -186,17 +192,17 @@ def _append_tail(
             tmp_dir = Path(tmp_str)
             tail_path = tmp_dir / "tail.mp4"
 
-            result = subprocess.run(
-                [
-                    ffmpeg_bin, "-y",
-                    "-ss", str(tail_start_s), "-i", str(tail_source),
-                    "-vf", f"scale={scaled_w}:{out_h},pad={out_w}:{out_h}:{x_offset}:0:black",
-                    "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
-                    "-level:v", "5.2", "-profile:v", "High", "-pix_fmt", "yuv420p", "-an",
-                    str(tail_path),
-                ],
-                capture_output=True,
-            )
+            cmd = [
+                ffmpeg_bin, "-y",
+                "-ss", str(tail_start_s), "-i", str(tail_source),
+                "-vf", f"scale={scaled_w}:{out_h},pad={out_w}:{out_h}:{x_offset}:0:black",
+                "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
+                "-level:v", "5.2", "-profile:v", "High", "-pix_fmt", "yuv420p",
+            ]
+            cmd += ["-acodec", "aac", "-b:a", "192k"] if include_audio else ["-an"]
+            cmd += [str(tail_path)]
+
+            result = subprocess.run(cmd, capture_output=True)
             if result.returncode != 0:
                 raise RuntimeError(
                     f"Tail encode failed: {result.stderr.decode(errors='replace')[-2000:]}"
@@ -240,8 +246,19 @@ def stitch_session(
     _, _, _, right_duration = probe_video(right)
     shared_duration = min(left_duration, right_duration)
 
+    # The longer camera's audio spans the whole output timeline (main segment
+    # plus any tail), so it's used throughout rather than switching tracks —
+    # one continuous recording, no splice at the seam.
+    audio_is_left = left_duration >= right_duration
+    audio_source = left if audio_is_left else right
+    audio_input_idx = 0 if audio_is_left else 1
+    has_audio = has_audio_stream(audio_source)
+
     try:
-        _stitch_ffmpeg(left, right, output, cal, progress_callback, 0.0, 0.0, shared_duration)
+        _stitch_ffmpeg(
+            left, right, output, cal, progress_callback, 0.0, 0.0, shared_duration,
+            audio_input_idx=audio_input_idx if has_audio else None,
+        )
     except Exception:
         output.unlink(missing_ok=True)
         raise
@@ -256,7 +273,10 @@ def stitch_session(
         other_idx = 1 - input_idx
         src_w, src_h = cal.frame_sizes[input_idx]
         on_left = cal.corners[input_idx][0] <= cal.corners[other_idx][0]
-        _append_tail(output, tail_source, shared_duration, out_w, out_h, on_left, src_w, src_h)
+        _append_tail(
+            output, tail_source, shared_duration, out_w, out_h, on_left, src_w, src_h,
+            include_audio=has_audio,
+        )
 
     # Calibration is expressed in canvas pixels; the maths is linear, so scaling
     # every field by the output/canvas ratio keeps downstream spherical
@@ -284,6 +304,7 @@ def _stitch_ffmpeg(
     left_offset_s: float = 0.0,
     right_offset_s: float = 0.0,
     duration_s: float | None = None,
+    audio_input_idx: int | None = None,
 ) -> None:
     """
     Stitch using an ffmpeg filter graph — no Python frame loop.
@@ -394,8 +415,12 @@ def _stitch_ffmpeg(
         cmd += ["-loop", "1", "-i", str(weight_path)]
 
         cmd += ["-filter_complex", filter_complex, "-map", "[out]"]
+        if audio_input_idx is not None:
+            cmd += ["-map", f"{audio_input_idx}:a:0"]
         cmd += ["-pix_fmt", "yuv420p", "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
                 "-level:v", "5.2", "-profile:v", "High", "-movflags", "+faststart"]
+        if audio_input_idx is not None:
+            cmd += ["-acodec", "aac", "-b:a", "192k", "-shortest"]
         cmd += [str(output)]
 
         process = subprocess.Popen(cmd, stderr=subprocess.PIPE)
