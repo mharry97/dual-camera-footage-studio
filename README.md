@@ -34,7 +34,7 @@ uv sync
 On your storage device (or computer), create a folder for your footage with the following structure:
 
 ```
-Frisbee Footage/
+Footage/
 ├── Left Camera/
 ├── Right Camera/
 └── Output Footage/
