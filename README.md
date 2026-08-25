@@ -71,9 +71,3 @@ On the Home page, enter the full path to your footage folder (e.g. `/Volumes/MyD
 ## Hardware Setup
 
 For best results, mount both cameras on a dual camera mount attached to a tripod or mast positioned at the side of the pitch, roughly 3–4 metres high. Each camera should cover one half of the pitch with slight overlap in the centre.
-
----
-
-## Status
-
-This project is under active development. Grouping and session matching are complete. Stitching is in progress.
